@@ -459,12 +459,17 @@
             margin-top: 2px;
         }
         .splash-loader-bar {
-            width: 0%;
+            width: 100%;
             height: 100%;
             background: linear-gradient(90deg, #0ea5e9, #38bdf8, #93c5fd);
             border-radius: 6px;
             box-shadow: 0 0 8px rgba(56, 189, 248, 0.6);
-            transition: width 0.18s linear;
+            /* PERF: width animasyonu her karede layout tetikler; transform X
+               ölçeği GPU'da kompozit katmanda çalışır. translate3d(-100%)
+               çubuğu tamamen gizler, JS ölçekle açar → %0-100 görüntüsü
+               birebir aynıdır. */
+            transform: translate3d(-100%, 0, 0);
+            will-change: transform;
         }
         /* Yüzde sayacı: gövde ve sağ/sol uç etiketleri */
         .splash-loader-row {
@@ -1791,6 +1796,9 @@
             .kpi-card.kpi-shine::after { animation: none; }
             .widget-card:hover::after { animation: none; }
         }
+        /* Holografik kenar halkası transform tabanlı olduğu için light temada
+           da dondurulur; cursor spotlight (::before) bu kuraldan etkilenmez. */
+        [data-theme="light"] .widget-card:hover::after { animation: none; }
 
         .topbar {
             background: var(--surface-glass);
@@ -1881,7 +1889,7 @@
         /* ==========================================================================
            5. DASHBOARD & KPI KARTLARI
            ========================================================================== */
-        .btn { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: var(--radius-sm); font-size: 12.6px; font-weight: 700; cursor: pointer; border: none; transition: all var(--transition-fast); box-shadow: var(--shadow-xs); white-space: nowrap; height: 28px; backdrop-filter: blur(8px); }
+        .btn { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: var(--radius-sm); font-size: 12.6px; font-weight: 700; cursor: pointer; border: none; transition: transform var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast); box-shadow: var(--shadow-xs); white-space: nowrap; height: 28px; backdrop-filter: blur(8px); }
         .btn:active { transform: scale(0.96); }
         .btn-primary { background: var(--brand-gradient); color: white !important; box-shadow: 0 3px 10px rgba(59, 130, 246, 0.4); }
         .btn-primary:hover { box-shadow: 0 5px 14px rgba(59, 130, 246, 0.5); transform: translateY(-1px); }
@@ -1891,7 +1899,7 @@
         .btn-secondary:hover { background: rgba(59, 130, 246, 0.15); border-color: var(--color-primary); color: var(--color-primary); transform: translateY(-1px); }
 
         .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; width: 100%; flex-shrink: 0; }
-        .kpi-card { border-radius: var(--radius-md); padding: 8px 12px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 2px; cursor: pointer; transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease; position: relative; overflow: hidden; backdrop-filter: blur(16px); }
+        .kpi-card { border-radius: var(--radius-md); padding: 8px 12px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 2px; cursor: pointer; transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease; position: relative; overflow: hidden; backdrop-filter: blur(16px); will-change: transform; }
         .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 100%; background: var(--glass-reflection); pointer-events: none; }
         
         .kpi-card:hover { 
@@ -2024,10 +2032,27 @@
             background: var(--surface-glass); backdrop-filter: blur(16px) saturate(180%);
             border: 1px solid var(--surface-border); border-radius: var(--radius-lg); 
             padding: 10px 12px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; 
-            gap: 8px; transition: all var(--transition-normal); width: 100%; position: relative;
+            gap: 8px; transition: transform var(--transition-normal), box-shadow var(--transition-normal), border-color var(--transition-normal); will-change: transform; width: 100%; position: relative;
         }
         .widget-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 100%; background: var(--glass-reflection); pointer-events: none; }
         .widget-card:hover { box-shadow: var(--shadow-md); border-color: var(--surface-border-strong); }
+        /* --- CURSOR-TRACKED SPOTLIGHT: imleç duyarlı cam ışığı ------------------
+           initWidgetSpotlight (tek delegasyon + rAF) imlecin altındaki kartın
+           --mx/--my değişkenlerini günceller; ışık yalnızca hovered kartta
+           boyanır. Varsayılan (-500px) değerleri sayesinde imleç girmeden
+           kartların görünümü birebir korunur — sıfır görsel kayıp. */
+        .widget-card::before {
+            background:
+                radial-gradient(230px circle at var(--mx, -500px) var(--my, -500px),
+                    rgba(125, 211, 252, 0.10), transparent 65%),
+                var(--glass-reflection);
+        }
+        [data-theme="light"] .widget-card::before {
+            background:
+                radial-gradient(230px circle at var(--mx, -500px) var(--my, -500px),
+                    rgba(13, 148, 136, 0.08), transparent 65%),
+                var(--glass-reflection);
+        }
         
         .widget-card-map {
             flex: 1;
@@ -4078,7 +4103,7 @@
         .btn-icon:hover { background: var(--color-primary); color: white !important; border-color: var(--color-primary); transform: translateY(-1px); }
         .btn-icon.delete:hover { background: var(--color-rose); color: white !important; border-color: var(--color-rose); }
 
-        .experts-hover-tooltip { position: fixed; display: none; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); color: #F8FAFC; padding: 6px 10px; border-radius: var(--radius-md); font-size: 11px; font-weight: 500; pointer-events: none; z-index: 2000; box-shadow: var(--shadow-xl); border: 1px solid rgba(255,255,255,0.2); line-height: 1.3; }
+        .experts-hover-tooltip { position: fixed; display: none; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); color: #F8FAFC; padding: 6px 10px; border-radius: var(--radius-md); font-size: 11px; font-weight: 500; pointer-events: none; z-index: 2000; box-shadow: var(--shadow-xl); border: 1px solid rgba(255,255,255,0.2); line-height: 1.3; will-change: transform; }
         .experts-hover-tooltip strong { color: #60a5fa; display: block; margin-bottom: 2px; border-bottom: 1px solid rgba(255,255,255,0.15); padding-bottom: 2px; font-size: 12px; font-weight: 600; }
 
         /* ==========================================================================
@@ -6365,12 +6390,29 @@ function hideScreensaver() {
     svLastT = 0;
 }
 
+/* PERF: mousemove/scroll saniyede yüzlerce kez tetiklenebilir; ekran koruyucu
+   kapalıyken zamanlayıcı sıfırlama işi rAF karesine sıkıştırılır (throttle).
+   Süre her sıfırlamada yeniden başladığı için davranış birebir aynıdır.
+   Ekran koruyucu AÇIKKEN gizleme anında çalışır (preview akışı bozulmaz). */
+let svIdleResetQueued = false;
 function resetScreensaverIdle() {
-    if (svRunning) hideScreensaver();
-    if (svIdleTimer) clearTimeout(svIdleTimer);
-    if (screensaverTimeoutMs > 0) {
-        svIdleTimer = setTimeout(showScreensaver, screensaverTimeoutMs);
+    if (svRunning) {
+        hideScreensaver();
+        if (svIdleTimer) clearTimeout(svIdleTimer);
+        if (screensaverTimeoutMs > 0) {
+            svIdleTimer = setTimeout(showScreensaver, screensaverTimeoutMs);
+        }
+        return;
     }
+    if (svIdleResetQueued) return;
+    svIdleResetQueued = true;
+    requestAnimationFrame(() => {
+        svIdleResetQueued = false;
+        if (svIdleTimer) clearTimeout(svIdleTimer);
+        if (screensaverTimeoutMs > 0) {
+            svIdleTimer = setTimeout(showScreensaver, screensaverTimeoutMs);
+        }
+    });
 }
 
 function setScreensaverTimeout(valMs) {
@@ -6411,6 +6453,8 @@ function initScreensaver() {
     const speedSelect = document.getElementById('saver-speed-select');
     if (speedSelect) speedSelect.value = String(saverCfg.speed);
     window.addEventListener('resize', () => { if (svRunning) svResize(); });
+    /* PERF: { passive: true } — bu dinleyiciler hiçbir olayı engellemez;
+       kaydırma zincirini beklemedikleri için scroll jank üretmezler. */
     ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart', 'scroll'].forEach(evt => {
         window.addEventListener(evt, resetScreensaverIdle, { passive: true });
     });
@@ -6668,11 +6712,26 @@ function animateParticles() {
     }
 
     _flushLinks();
-    requestAnimationFrame(animateParticles);
+    /* PERF: Döngü kimliği tek değişkende tutulur; visibilitychange ile sekme
+       görünürlük kazandığında döngünün TEK kopyası devam ettirilir (çift
+       döngü = 2× CPU). Sekme gizliyken zaten rAF durur; bu dinleyici yalnızca
+       geri dönüşte kopyasız devamı garanti eder. */
+    constellationRaf = requestAnimationFrame(animateParticles);
 }
 
+let constellationRaf = 0;
 initParticles();
 animateParticles();
+/* PERF: Sekme gizlenince döngü bilinçli iptal edilir (bayat rAF kimliği
+   kalmaz); geri dönünce TEK kopya yeniden başlar → asla çift döngü, asla
+   sızıntı. Sekme görünürken rAF zaten tarayıcıyla birlikte durur. */
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        if (constellationRaf) { cancelAnimationFrame(constellationRaf); constellationRaf = 0; }
+    } else if (!constellationRaf) {
+        animateParticles();
+    }
+}, { passive: true });
 
 /* ==========================================================================
    SPLASH SCREEN — BLUEPRINT LOADER
@@ -6712,7 +6771,9 @@ function startSplashLoader() {
         const ratio = Math.min(1, elapsed / total);
         const pct = Math.min(100, Math.round(easeOut(ratio) * 100));
 
-        barEl.style.width = pct + '%';
+        /* PERF: width yerine GPU transform (ölçek). -100% kaydırma çubuğu
+           tamamen saklar; ölçek açığa çıkarır → 0% görüntüsü korunur. */
+        barEl.style.transform = `translate3d(${(pct - 100).toFixed(2)}%, 0, 0)`;
 
         if (pct !== lastPct) {
             pctEl.textContent = String(pct).padStart(3, '0');
@@ -7732,6 +7793,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateUndoIndicator();
 
     initFxRipple();
+    initWidgetSpotlight();
     initScreensaver();
     initTheme();
     loadCustomTheme();
@@ -10447,6 +10509,21 @@ const donutLegend = (items, filterable, activeName) => items.map(it => {
            odak/caret konumunu korumak için değer doğrudan atanır. */
         search.addEventListener('input', e => {
             const pos = e.target.selectionStart;
+            /* PERF: Her tuş vuruşunda panelin tamamı (337+ kayıt taraması +
+               onlarca grafik HTML'i) yeniden kuruluyordu; yazma akışında
+               250ms debounce uygulanır. Boşaltma anında uygulanır. */
+            const isClearing = !String(e.target.value || '').trim();
+            if (statsSearchDebounce) clearTimeout(statsSearchDebounce);
+            if (!isClearing) {
+                statsSearchDebounce = setTimeout(() => {
+                    statsSearchDebounce = null;
+                    statsFilter.q = e.target.value;
+                    renderStatisticsView();
+                    const next = document.getElementById('stats-search');
+                    if (next) { next.focus(); try { next.setSelectionRange(pos, pos); } catch (err) { /* type=search bazı tarayıcılarda reddeder */ } }
+                }, 250);
+                return;
+            }
             statsFilter.q = e.target.value;
             renderStatisticsView();
             const next = document.getElementById('stats-search');
@@ -10456,6 +10533,9 @@ const donutLegend = (items, filterable, activeName) => items.map(it => {
     /* Açılış animasyonu: DOM'a basıldıktan hemen sonra tetiklenir. */
     statsAnimateOnOpen(grid);
 }
+
+/* PERF: İstatistik arama debounce zamanlayıcısı (modül kapsamı). */
+let statsSearchDebounce = null;
 
 /* ==========================================================================
    İSTATİSTİK AÇILIŞ ANİMASYONLARI (statsAnimateOnOpen)
@@ -11945,6 +12025,7 @@ function initKpiChipTooltips() {
     tip.dataset.kpiTipBound = '1';
 
     const coarsePointer = window.matchMedia && window.matchMedia('(hover: none)').matches;
+    let kpiTipRaf = 0;
 
     document.addEventListener('mouseover', e => {
         const chip = e.target.closest('.kpi-chip');
@@ -11958,14 +12039,75 @@ function initKpiChipTooltips() {
     });
     document.addEventListener('mousemove', e => {
         if (!tip.classList.contains('kpi-tip-show')) return;
+        /* PERF: Konum yazımı rAF karesine sıkıştırılır; ardışık mousemove
+           olayları tek DOM yazımına birleşir. */
         const pad = 12;
         let x = e.clientX + pad;
         let y = e.clientY + pad;
         const rect = tip.getBoundingClientRect();
         if (x + rect.width > window.innerWidth - 8) x = e.clientX - rect.width - pad;
         if (y + rect.height > window.innerHeight - 8) y = e.clientY - rect.height - pad;
-        tip.style.left = Math.max(8, x) + 'px';
-        tip.style.top = Math.max(8, y) + 'px';
+        const nx = Math.max(8, x), ny = Math.max(8, y);
+        if (kpiTipRaf) cancelAnimationFrame(kpiTipRaf);
+        kpiTipRaf = requestAnimationFrame(() => {
+            kpiTipRaf = 0;
+            tip.style.left = nx + 'px';
+            tip.style.top = ny + 'px';
+        });
+    });
+}
+
+/* CURSOR-TRACKED SPOTLIGHT (Awwwards mikro-etkileşim) ----------------------
+   Cam kartlarda imleci takip eden ışık + kenar parlaması. Performans profili:
+     • TEK delegasyonlu pointermove (kart başına listener YOK → binlerce kartta
+       bile dinleyici sayısı sabittir, bellek sızıntısı ve unbind derdi yoktur;
+       render ile yeniden basılan kartlar kendiliğinden çalışır).
+     • { passive: true } → kaydırma zincirini beklemez, scroll jank üretmez.
+     • Koordinatlar pointer-events yoluyla zaten kare başına en fazla bir
+       kez gelir; DOM yazımı rAF'a sıkıştırılır (en son değer kazanır).
+     • Işık CSS radial-gradient'i yalnızca hovered kartın ::before'unda
+       boyanır; değişkenler sadece ilgili kartta yazılır (stil hesabı kare
+       başına 1 kartla sınırlı kalır). Kenar halkası mevcut fxBorderSpin
+       animasyonuyla birleşir. prefers-reduced-motion'da tamamen sessizdir. */
+function initWidgetSpotlight() {
+    if (initWidgetSpotlight._bound) return;
+    initWidgetSpotlight._bound = true;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    let currentCard = null;
+    let queuedEvent = null;
+    let spotlightRaf = 0;
+
+    const paint = () => {
+        spotlightRaf = 0;
+        const ev = queuedEvent;
+        queuedEvent = null;
+        if (!ev || !currentCard) return;
+        const rect = currentCard.getBoundingClientRect();
+        currentCard.style.setProperty('--mx', (ev.clientX - rect.left) + 'px');
+        currentCard.style.setProperty('--my', (ev.clientY - rect.top) + 'px');
+    };
+
+    document.addEventListener('pointermove', (ev) => {
+        const card = ev.target && ev.target.closest ? ev.target.closest('.widget-card') : null;
+        if (card !== currentCard) {
+            if (currentCard && currentCard.isConnected) {
+                /* Ayrılırken ışığı kart dışına it → hover bittiğinde ışık
+                   doğal biçimde söner (opacity geçişi olmadan da temiz). */
+                currentCard.style.setProperty('--mx', '-500px');
+                currentCard.style.setProperty('--my', '-500px');
+            }
+            currentCard = card;
+        }
+        if (!currentCard) return;
+        queuedEvent = ev;
+        if (!spotlightRaf) spotlightRaf = requestAnimationFrame(paint);
+    }, { passive: true });
+
+    /* Sekme değişimi / fare çıkışında bekleyen kare varsa temizle. */
+    window.addEventListener('blur', () => {
+        if (spotlightRaf) { cancelAnimationFrame(spotlightRaf); spotlightRaf = 0; }
+        queuedEvent = null;
     });
 }
 
@@ -13314,14 +13456,32 @@ function renderProjectsTable() {
     _applyStaggerIndex(tbody, 20);
 
     const tooltip = document.getElementById('experts-hover-tooltip');
+    /* PERF: mousemove satır başına bağlanıyordu (N satır = N dinleyici + her
+       harekette çift layout tetiklemesi: clientX okuma + left/top yazma).
+       Tek delegasyonlu dinleyici + rAF: dinleyici sayısı sabit, konum yazımı
+       kare başına bir kez. left/top yerine transform → layout değil yalnızca
+       composite tetiklenir (will-change: transform CSS'te tanımlı). */
+    let tipRaf = 0, tipX = 0, tipY = 0;
+    const paintTip = () => {
+        tipRaf = 0;
+        tooltip.style.transform = `translate3d(${tipX + 12}px, ${tipY + 12}px, 0)`;
+    };
+    tbody.addEventListener('mousemove', (e) => {
+        if (tooltip.style.display !== 'block') return;
+        tipX = e.clientX; tipY = e.clientY;
+        if (!tipRaf) tipRaf = requestAnimationFrame(paintTip);
+    }, { passive: true });
     tbody.querySelectorAll('.table-row-hover').forEach(row => {
         row.addEventListener('mouseenter', (e) => {
             const id = row.getAttribute('data-job-id'); const j = jobs.find(x => String(x.id) === String(id)); if (!j) return;
             const ex = j.experts || {};
             tooltip.innerHTML = `<strong>Proje Sorumlu Kadrosu:</strong>• ${customHeaderTitles.mimari || 'MİMARİ'}: ${ex.mimari || '-'}<br>• ${customHeaderTitles.statik || 'STATİK'}: ${ex.statik || '-'}<br>• ${customHeaderTitles.mekanik || 'MEKANİK'}: ${ex.mekanik || '-'}<br>• ${customHeaderTitles.elektrik || 'ELEKTRİK'}: ${ex.elektrik || '-'}<br>• ${customHeaderTitles.altyapi || 'ALTYAPI'}: ${ex.altyapi || '-'}<br>• ${customHeaderTitles.peyzaj || 'PEYZAJ'}: ${ex.peyzaj || '-'}`;
             tooltip.style.display = 'block';
+            /* İlk gösterimde konumu senkron kur; aksi halde tooltip bir kare
+               eski (0,0) konumunda yanıp sönerdi. */
+            tipX = e.clientX; tipY = e.clientY;
+            if (!tipRaf) tipRaf = requestAnimationFrame(paintTip);
         });
-        row.addEventListener('mousemove', (e) => { tooltip.style.left = (e.clientX + 12) + 'px'; tooltip.style.top = (e.clientY + 12) + 'px'; });
         row.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
     });
 }
@@ -14395,6 +14555,9 @@ function initNoteBoardPanning() {
     let panning = false;      // eşik aşıldı mı
     let armed = false;        // mousedown basıldı, henüz karar verilmedi
     let startX = 0, startY = 0, startScroll = 0;
+    /* PERF: rAF-throttled pan durumu. */
+    let panRaf = 0;
+    let panTargetScroll = 0;
 
     /* Bu hedefin üzerinde pano sürüklenmemeli: kullanıcı kendi kontrolüne
        (buton, metin alanı, düzenlenebilir pano başlığı, seçilebilir not
@@ -14430,33 +14593,44 @@ function initNoteBoardPanning() {
 
     board.addEventListener('mousemove', event => {
         if (!armed) return;
-
-        const dx = event.clientX - startX;
-        const dy = event.clientY - startY;
-
+        /* PERF: Pan başlamadan önceki harekette hiçbir iş yapma; pan sırasında
+           scrollLeft yazımı rAF karesine sıkıştırılır (mousemove saniyede
+           120-1000 Hz gelebilir; layout okuması ve yazımı kare başına 1'e düşer). */
         if (!panning) {
+            const dx0 = event.clientX - startX;
+            const dy0 = event.clientY - startY;
             /* Eşiğe kadar SADECE yatay baskın hareketi sayılır. Kullanıcı
                dikey kaydırma yapıyorsa (iç listeyi geziyorsa) pano kaymaz. */
-            if (Math.abs(dx) < NOTE_BOARD_PAN_THRESHOLD) return;
-            if (Math.abs(dy) > Math.abs(dx)) { armed = false; return; }
+            if (Math.abs(dx0) < NOTE_BOARD_PAN_THRESHOLD) return;
+            if (Math.abs(dy0) > Math.abs(dx0)) { armed = false; return; }
             panning = true;
             board.classList.add('is-panning');
         }
 
         /* Kenara yaklaştıkça hızlanma: Trello'daki "hassaslık" hissi. */
-        let delta = dx;
+        let delta = event.clientX - startX;
         const rect = board.getBoundingClientRect();
         const overLeft = startX - rect.left < NOTE_BOARD_PAN_EDGE;
         const overRight = rect.right - event.clientX < NOTE_BOARD_PAN_EDGE;
         if (overLeft || overRight) delta *= 1.4;
 
-        board.scrollLeft = startScroll - delta;
+        panTargetScroll = startScroll - delta;
         /* Yatay hareket başladı: tarayıcının kendi metin seçimini engelle. */
         event.preventDefault();
+        if (!panRaf) {
+            panRaf = requestAnimationFrame(() => {
+                panRaf = 0;
+                if (panning) board.scrollLeft = panTargetScroll;
+            });
+        }
     });
 
     function endPan() {
-        if (panning) board.classList.remove('is-panning');
+        if (panRaf) { cancelAnimationFrame(panRaf); panRaf = 0; }
+        if (panning) {
+            board.scrollLeft = panTargetScroll; /* son hedefi kaybetme */
+            board.classList.remove('is-panning');
+        }
         armed = false;
         panning = false;
     }
