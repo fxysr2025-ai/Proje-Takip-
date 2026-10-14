@@ -121,6 +121,25 @@
                etkiler, tema/hover geçişlerine dokunmaz. */
             --transition-sidebar: 0.4s ease;
 
+            /* --- AWWWARDS CAM DOKUSU & KENAR IŞIĞI -----------------------
+               --fx-grain: yüzey altına serilen %2 yoğunluklu SVG feTurbulence
+               dokusu. Veri URI olarak tanımlı; ayrı dosya isteği yoktur,
+               çevrimdışı da çalışır ve tek satırlık uygulamanın yapısına
+               uygundur. Tüm cam yüzeyler bunu kendi ::after katmanıyla alır.
+               --fx-grain-opacity gündüzde yükseltilir: açık zeminde beyaz
+               gürültü kaybolur, koyu zeminde ise lekeye dönüşür.
+               --fx-beam-*: kenar ışığı (conic gradient) durakları. Tek
+               kaynaktan beslenir, böylece kart ve modal aynı hüzme rengini
+               paylaşır ve gündüz/karanlık geçişinde birlikte çevrilir. */
+            --fx-grain-opacity: 0.02;
+            --fx-beam-dim: rgba(56, 189, 248, 0.15);
+            --fx-beam-hot: rgba(125, 211, 252, 0.85);
+            /* feTurbulence + feColorMatrix ile üretilmiş tek seferlik SVG.
+               baseFrequency 0.8 (ince grenaj), numOctaves 3 (yumuşak
+               dağılım). result'ın alfa kanalı maske olarak kullanılır ve
+               feColorMatrix ile istenen renge boyanır. */
+            --fx-grain-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+
             --input-bg: #0f172a;
             --table-header-bg: #0f172a;
             --table-header-txt: #94a3b8;
@@ -192,6 +211,15 @@
             --color-indigo: #4338ca;
 
             --brand-gradient: linear-gradient(135deg, #0f766e 0%, #115e59 100%);
+
+            /* Gündüzde kenar ışığı ve cam dokusu yeniden ayarlanır: koyu
+               zemindeki cyan hüzmesi açık zeminde neredeyse görünmez olduğu
+               için doygunluğu düşürülmüş bir petrol mavisi kullanılır ve
+               sıcak bir kehribar alternatifi eklenir. Grain opaklığı da
+               yükseltilir — beyaz gürültü açık zeminde kaybolurdu. */
+            --fx-grain-opacity: 0.035;
+            --fx-beam-dim: rgba(13, 148, 136, 0.16);
+            --fx-beam-hot: rgba(15, 118, 110, 0.72);
 
             --kpi-total-bg: #e0f2f0;
             --kpi-total-border: #a7d8d3;
@@ -1692,23 +1720,97 @@
             100% { left: 130%; opacity: 0; }
         }
 
-        /* --- Holografik kenar ışığı: hover'da kart çerçevesinde dolaşan hüzme --- */
+        /* ==========================================================================
+           AWWWARDS CAM DOKUSU (SVG GRAIN)
+           --------------------------------------------------------------------------
+           Cam yüzeyler saydam olduğu için arkalarındaki düz zemin, camın
+           kendisinden daha düz görünür. %2 yoğunluklu bir gürültü dokusu bu
+           düzlüğü bozar ve yüzeye "materyal" verir.
+
+           Neden SVG feTurbulence ve neden data URI:
+             • Harici dosya yok → tek satırlık uygulama yapısı bozulmaz ve
+               uygulama çevrimdışı da doğru görünür.
+             • baseFrequency yüksek tutulur (0.8): düşük frekansta leke
+               oluşur ve kameraya yaklaşınca kirlilik görünür.
+             • Turkuaz/mavi tonlu gürültü: feColorMatrix ile griye çevrilip
+               koyu temaya göre hafif maviye kaydırılır.
+           Uygulama tek katmanlıdır: her yüzey kendi katmanını kullanır ki
+           z-index çakışması yaratmasın. Grain, yüzeyin dolgu katmanıyla
+           birleştirilir (background-image) — ayrı bir öğe eklemek yerine. */
+        /* feTurbulence tabanlı gürültü + feColorMatrix ile renklendirme.
+           Renk, --fx-grain-rgb bileşenleriyle tema token'ından gelir; bu
+           sayede gündüz/karanlık geçişinde dokunun rengi de değişir. */
+        .glass-grain {
+            background-image: var(--fx-grain-image);
+        }
+        .glass-grain::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            pointer-events: none;
+            opacity: var(--fx-grain-opacity);
+            background-image: var(--fx-grain-image);
+            background-size: 180px 180px;
+            z-index: 0;
+        }
+
+        /* ==========================================================================
+           KENAR IŞIĞI (BORDER BEAM) — imleç yönlü conic hüzme
+           --------------------------------------------------------------------------
+           --fx-angle @property ile kayıt altındadır; bu olmadan conic-gradient
+           açısaları CSS geçişlerinde interpolate EDİLMEZ ve ışık zıplar.
+           Hüzme imleci takip eder: --fx-mx, imlecin kart içindeki köşe
+           açısının 0..1 oranıdır ve JS tarafından yazılır.
+           ========================================================================== */
         @property --fx-angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+        /* Genel kenar ışığı yüzeyi. .widget-card doğrudan seçici listesinde
+           yer alır: markup'ı değiştirmeden de hüzmeyi alır, ayrıca ikinci
+           bir ::after kuralı yazılmaz — aynı sözde-element iki kez
+           tanımlanırsa hangisinin geçerli olduğu kaynak sırasına bağlı
+           hale gelir ve tema geçişinde kırılır. --fx-mx/--fx-my JS tarafından
+           imlecin göreli konumu (0..1) olarak yazılır. */
+        .beam-surface,
+        .widget-card {
+            position: relative;
+            isolation: isolate;
+        }
+        .beam-surface::after,
         .widget-card::after {
             content: ''; position: absolute; inset: 0; z-index: 3;
             border-radius: inherit; padding: 1px;
-            background: conic-gradient(from var(--fx-angle),
-                transparent 0deg, transparent 300deg,
-                rgba(56, 189, 248, 0.15) 315deg, rgba(125, 211, 252, 0.85) 340deg,
-                rgba(56, 189, 248, 0.15) 355deg, transparent 360deg);
+            /* Hüzme, imlecin bulunduğu köşeye yerleşir: 0deg yukarıda başlar
+               ve --fx-mx kadar döner. Böylece ışık imleci takip eder, kartın
+               çevresinde sabit dönmez. */
+            background: conic-gradient(from calc(var(--fx-angle) + var(--fx-mx, 0) * 360deg),
+                transparent 0deg, transparent 292deg,
+                var(--fx-beam-dim) 310deg, var(--fx-beam-hot) 340deg,
+                var(--fx-beam-dim) 358deg, transparent 360deg);
             -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
             -webkit-mask-composite: xor;
                     mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
                     mask-composite: exclude;
             opacity: 0; transition: opacity 0.45s ease; pointer-events: none;
         }
-        .widget-card:hover::after { opacity: 1; animation: fxBorderSpin 3.8s linear infinite; }
+        .beam-surface:hover::after,
+        .beam-surface:focus-within::after,
+        .widget-card:hover::after {
+            opacity: 1;
+            animation: fxBorderSpin 3.8s linear infinite;
+        }
         @keyframes fxBorderSpin { to { --fx-angle: 360deg; } }
+
+        /* Hareket duyarlılığı: kenar ışığı ve grain dekoratif olduğu için
+           ikisi de devre dışı kalır. Grain kaldırılmaz — statik bir doku
+           hareket üretmez, yalnızca ışığın dönmesi ve parlaklık geçişi
+           durdurulur. */
+        @media (prefers-reduced-motion: reduce) {
+            .beam-surface::after,
+            .widget-card::after {
+                animation: none !important;
+                transition: none !important;
+            }
+        }
 
         /* ==========================================================================
            PANEL AÇIKLAMA BANDI
@@ -1892,6 +1994,15 @@
 
         .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; width: 100%; flex-shrink: 0; }
         .kpi-card { border-radius: var(--radius-md); padding: 8px 12px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 2px; cursor: pointer; transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease; position: relative; overflow: hidden; backdrop-filter: blur(16px); }
+        /* Grain, dolgu katmanıyla birleştirilir (ayrı öğe/stacking context
+           açmadan): ::before zaten --glass-reflection'ı taşıyor, ::after da
+           kenar ışığını. Yeni bir sözde-element eklemek yerine blend mode
+           kullanılır — hem daha ucuz hem de z-index sırasını bozmaz. */
+        .widget-card:not(.kpi-card) {
+            background-image: var(--fx-grain-image);
+            background-blend-mode: overlay;
+            background-size: 180px 180px;
+        }
         .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 100%; background: var(--glass-reflection); pointer-events: none; }
         
         .kpi-card:hover { 
@@ -1913,6 +2024,21 @@
         .kpi-card.kpi-pastel-4 { background: var(--kpi-done-bg); border: 1px solid var(--kpi-done-border); }
         .kpi-card.kpi-pastel-4 .kpi-title, .kpi-card.kpi-pastel-4 .kpi-value { color: var(--kpi-done-text) !important; font-weight: 700; }
 
+        /* Grain, pastel kurallarından SONRA tanımlanır: .kpi-pastel-* kuralları
+           `background:` SHORTHAND kullanıyor ve shorthand, kendisinden önce
+           yazılmış background-image'i SİLİR (background-image, background'ın
+           bir alt özelliğidir). Bu yüzden grain pastel dolguların ardından
+           ayrı bir katman olarak verilir; blend mode dokuyu dolgunun üstünde
+           harmanlar, pastel rengi bozmaz. */
+        .kpi-card.kpi-pastel-1,
+        .kpi-card.kpi-pastel-2,
+        .kpi-card.kpi-pastel-3,
+        .kpi-card.kpi-pastel-4 {
+            background-image: var(--fx-grain-image);
+            background-blend-mode: overlay;
+            background-size: 180px 180px;
+        }
+
         .kpi-top { display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 2; }
         .kpi-title { font-size: 11.4px; font-weight: 800; letter-spacing: 0.4px; text-transform: uppercase; }
         .kpi-icon-box { width: 24px; height: 24px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; font-size: 12px; transition: transform var(--transition-bounce); box-shadow: var(--shadow-xs); }
@@ -1922,7 +2048,13 @@
         .kpi-pastel-4 .kpi-icon-box { background: rgba(16, 185, 129, 0.3); color: var(--kpi-done-text); }
         .kpi-value-box { display: flex; align-items: baseline; gap: 8px; position: relative; z-index: 2; }
         .kpi-value { font-size: 18px; font-weight: 800; letter-spacing: -0.4px; }
-        .kpi-badge { font-size: 10.2px; font-weight: 800; padding: 2px 5px; border-radius: 4px; }
+        .kpi-badge { font-size: 10.2px; font-weight: 800; padding: 2px 5px; border-radius: 4px; display: inline-flex; align-items: baseline; gap: 0; white-space: nowrap; }
+        /* Rozet içindeki akan sayı: tab rakamı (tabular-nums) kullanılır,
+           aksi hâlde "1" → "11" geçişinde genişlik değişir ve rozet titrer.
+           display:inline-flex olduğu için üç çocuk span (önek / sayı / ek)
+           yan yana akar ve aralarında boşluk olmaz; boşluk metnin kendi
+           içinde (" kayıt") zaten var. */
+        .kpi-badge-num { font-variant-numeric: tabular-nums; letter-spacing: 0.1px; }
         .kpi-badge.up { background: rgba(16, 185, 129, 0.25); color: var(--color-emerald); }
         .kpi-badge.warn { background: rgba(244, 63, 94, 0.25); color: var(--color-rose); }
         /* --- KPI ALT İSTATİSTİK ÇİPLERİ (glassmorphism mikro-chip'ler) --- */
@@ -3087,6 +3219,51 @@
         .stats-year-col.is-click:hover .stats-year-lab { color: var(--txt-main); }
         .stats-year-col.is-active .stats-year-lab { color: var(--color-primary); font-weight: 800; }
         .stats-year-col.is-active .stats-year-bar { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+        /* --- CANLI SPARKLINE (AWWWARDS) ----------------------------------
+           Kolonların ÜSTÜNE binen ince trend hattı. Absolute konumlandırılır
+           ki kolon şeridinin akışını bozmasın; pointer-events:none ile
+           tıklamayı kolonlara geçirir, yani yıl filtresi çalışmaya devam eder. */
+        .stats-year-strip { position: relative; }
+        .stats-spark {
+            position: absolute;
+            /* Kolon üst yazısı (span, top:-15px) ile çakışmasın diye yalnızca
+               kolon gövdeleri kadar bir alan kaplar. */
+            left: 0; right: 0;
+            bottom: 16px;
+            height: 34px;
+            width: 100%;
+            pointer-events: none;
+            overflow: visible;
+        }
+        .stats-spark-area { fill: var(--color-cyan); opacity: 0.10; }
+        .stats-spark-line {
+            fill: none;
+            stroke: var(--color-cyan);
+            stroke-width: 1.4;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            vector-effect: non-scaling-stroke; /* esnemede kalınlık sabit */
+            filter: drop-shadow(0 0 3px rgba(6, 182, 212, 0.55));
+            animation: statsSparkDraw 1.1s var(--ease-award) forwards;
+        }
+        @keyframes statsSparkDraw { to { stroke-dashoffset: 0; } }
+        .stats-spark-dot {
+            fill: var(--color-cyan);
+            filter: drop-shadow(0 0 4px rgba(6, 182, 212, 0.9));
+            animation: statsSparkPulse 1.9s ease-in-out infinite;
+        }
+        @keyframes statsSparkPulse {
+            0%, 100% { opacity: 1; r: 1.6; }
+            50% { opacity: 0.55; r: 2.4; }
+        }
+        [data-theme="light"] .stats-spark-line,
+        [data-theme="light"] .stats-spark-dot { stroke: var(--color-primary); fill: var(--color-primary); }
+        [data-theme="light"] .stats-spark-line { filter: drop-shadow(0 0 3px rgba(15, 118, 110, 0.4)); }
+        [data-theme="light"] .stats-spark-area { fill: var(--color-primary); opacity: 0.12; }
+        @media (prefers-reduced-motion: reduce) {
+            .stats-spark-line { animation: none; stroke-dashoffset: 0 !important; }
+            .stats-spark-dot { animation: none; }
+        }
         .stats-yoy { font-size: 8.6px; font-weight: 800; line-height: 1; padding: 1px 3px; border-radius: 4px; white-space: nowrap; }
         .stats-yoy.up { color: #6ee7b7; background: rgba(16, 185, 129, 0.16); }
         .stats-yoy.down { color: #fca5a5; background: rgba(239, 68, 68, 0.16); }
@@ -4179,8 +4356,31 @@
            ========================================================================== */
         .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(12px); display: flex; align-items: center; justify-content: center; z-index: 10000; opacity: 0; pointer-events: none; transition: opacity var(--transition-normal); padding: 10px; }
         .modal-overlay.active { opacity: 1; pointer-events: auto; }
-        .modal-card { background: var(--surface-1); backdrop-filter: blur(24px) saturate(180%); border: 1px solid var(--surface-border-strong); border-radius: var(--radius-xl); width: 100%; max-width: 850px; max-height: 95vh; overflow-y: auto; display: flex; flex-direction: column; color: var(--txt-main); box-shadow: var(--shadow-xl); transform: scale(0.96) translateY(6px); transition: transform var(--transition-bounce); position: relative; }
+        .modal-card { background: var(--surface-1); background-image: var(--fx-grain-image); background-blend-mode: overlay; backdrop-filter: blur(24px) saturate(180%); border: 1px solid var(--surface-border-strong); border-radius: var(--radius-xl); width: 100%; max-width: 850px; max-height: 95vh; overflow-y: auto; display: flex; flex-direction: column; color: var(--txt-main); box-shadow: var(--shadow-xl); transform: scale(0.96) translateY(6px); transition: transform var(--transition-bounce); position: relative; }
+        /* Modal kenar ışığı: --beam-surface ile aynı hüzme, ancak modal kendi
+           ::before katmanını (glass-reflection) kullandığı için ikinci bir
+           ::after yazmak yerine kenar hüzmesi doğrudan burada tanımlanır. */
         .modal-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 100%; background: var(--glass-reflection); pointer-events: none; }
+        .modal-card::after {
+            content: ''; position: absolute; inset: 0; z-index: 3;
+            border-radius: inherit; padding: 1px; pointer-events: none;
+            background: conic-gradient(from calc(var(--fx-angle) + var(--fx-mx, 0) * 360deg),
+                transparent 0deg, transparent 292deg,
+                var(--fx-beam-dim) 310deg, var(--fx-beam-hot) 340deg,
+                var(--fx-beam-dim) 358deg, transparent 360deg);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+                    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+                    mask-composite: exclude;
+            opacity: 0; transition: opacity 0.5s ease;
+        }
+        .modal-overlay.active .modal-card::after {
+            opacity: 1;
+            animation: fxBorderSpin 4.6s linear infinite;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .modal-card::after { animation: none !important; }
+        }
         .modal-overlay.active .modal-card { transform: scale(1) translateY(0); }
 
         .modal-card.modal-large-split { max-width: 1350px; width: 96vw; max-height: 95vh; overflow: hidden; display: flex; flex-direction: column; }
@@ -6381,7 +6581,56 @@ function setScreensaverTimeout(valMs) {
     resetScreensaverIdle();
 }
 
-/* Nokta sayısı / bağlantı mesafesi / hız ayarı — canlı uygulanır */
+/* ==========================================================================
+   AWWWARDS: İMLEÇ YÖNLÜ KENAR IŞIĞI (BORDER BEAM)
+   --------------------------------------------------------------------------
+   .beam-surface / .widget-card üzerindeki conic hüzme sabit dönüyordu; artık
+   imlecin kartın neresinde olduğuna göre kayar. --fx-mx, imlecin kart içindeki
+   yatay oranını (0 = sol, 1 = sağ) conic başlangıç açısına ekler.
+
+   Neden event delegation: kartlar dinamik olarak render ediliyor (KPI, pano
+   sütunları, istatistik satırları). Her karta ayrı pointermove bağlansaydı
+   her render'da yeni dinleyici birikir ve sürükleme bozulurdu. Tek bir
+   dinleyici + closest() ile yalnızca hedef yüzey güncellenir.
+
+   SEÇİCİ DİKKATİ: .widget-card hüzneyi CSS'ten alır; .kpi-card ve
+   .modal-card kendi ::after kurallarına sahiptir. JS seçicisi dördünü de
+   içermek zorundadır — CSS'te olup JS'te unutulan bir yüzey, hüzmesi
+   görünen ama imleci takip etmeyen bir kart olarak sessizce kalırdı.
+
+   Maliyet: her pointermove'da yalnızca iki özel mülk yazılır (özel mülk
+   yazımı stil geçişi tetiklemez; sadece conic gradient yeniden boyanır) ve
+   yalnızca imleç yüzeyin ÜZERİNDEYKEN çalışır.
+   ========================================================================== */
+function initBeamPointerTracking() {
+    if (typeof window.matchMedia === 'function'
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    window.addEventListener('pointermove', event => {
+        const el = event.target && event.target.closest
+            ? event.target.closest('.beam-surface, .widget-card, .kpi-card, .modal-card')
+            : null;
+        if (!el) return;
+
+        const rect = el.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+
+        /* conic-gradient 0deg = yukarı (12 o'clock) ve saat yönünde artar.
+           Köşeyi 45deg'lik dilimlere eşleyerek hüzme imlecin bulunduğu köşeye
+           oturur: üst-sol 0, üst-sağ 90, alt-sağ 180, alt-sol 270. */
+        const nx = (event.clientX - rect.left) / rect.width;
+        const ny = (event.clientY - rect.top) / rect.height;
+        const angle = Math.round(((Math.atan2(ny - 0.5, nx - 0.5) * 180 / Math.PI) + 450) % 360);
+
+        /* Aynı yüzeye tekrar yazmak stil motorunu uyandırır; kare başına en
+           fazla bir güncelleme yapılır. */
+        if (el.dataset.fxAngle === String(angle)) return;
+        el.dataset.fxAngle = String(angle);
+        el.style.setProperty('--fx-mx', String(angle / 360));
+    }, { passive: true });
+}
+
+initBeamPointerTracking();
 function setSaverConfig(key, val) {
     const num = Number(val);
     if (!Number.isFinite(num) || num < 0) return;
@@ -10394,7 +10643,7 @@ const donutLegend = (items, filterable, activeName) => items.map(it => {
     }).join('');
     html += `<div class="stats-card">
         <div class="stats-card-head"><span class="stats-card-title"><i class="fa-solid fa-calendar-days" style="color:var(--color-cyan);"></i> Sözleşme Yılları</span><span class="stats-card-sub">${STATS_YEAR_START} - ${D.yearKeys[D.yearKeys.length - 1] || STATS_YEAR_START}</span></div>
-        <div class="stats-year-strip">${yearCols}</div>
+        <div class="stats-year-strip">${yearCols}${buildStatsYearSparkline(D.yearKeys, D.yearCounts, yMax)}</div>
         <span class="stats-foot">${D.yearOutOfStrip ? `<b>${D.yearOutOfStrip}</b> kaydın sözleşme yılı grafik aralığı dışında (2016 öncesi/ileri tarih).` : 'Grafik, harita altındaki yıl şeridiyle aynı aralığı gösterir.'}</span></div>`;
     /* KART 7 (YENİ): EN ÇOK İŞ ALAN YÜKLENİCİLER (ilk 10, animasyonlu bar) */
     const yMaxCount = D.yukleniciTop10.length ? D.yukleniciTop10[0].count : 0;
@@ -10515,6 +10764,55 @@ function statsAnimateOnOpen(rootEl) {
 
 /* Donut dilimleri: conic-gradient durakları üretir. 0'lı kategoriler atlanır;
    hepsi 0 ise nötr gri ring döner. */
+/* ==========================================================================
+   AWWWARDS: CANLI SPARKLINE
+   --------------------------------------------------------------------------
+   Yıl grafiği zaten yıllık sözleşme sayılarını kolon olarak çiziyor; eksik olan
+   şey TRENDİ GÖRÜNÜR KILMAKTI. Bu fonksiyon aynı veriyi ince bir çizgi olarak
+   kolonların üstüne serer:
+
+     • SVG viewBox ile ölçeklenir → kart genişliği değişse de hat esner.
+     • stroke-dasharray/offset hattı soldan sağa "çizer" (stroke animasyonu).
+     • Son noktaya parlayan nokta konur (canlı veri hissi); parlam CSS ile
+       tekrarlanır, JS karışmaz.
+     • Erişilebilirlik: role="img" + <title> ile ekran okuyucuya aktarılır;
+       dekoratif sayılıp gizlenmez.
+
+   KAPSAM: renderStatsGrid'in DIŞINDA, global kapsamda tanımlıdır. Daha önce
+   render fonksiyonunun içine yazılmıştı; render her çağrıldığında yeniden
+   tanımlanmadığı için tanım ilk çağrıdan sonra erişilemez hâle geliyor ve
+   istatistik kartı ReferenceError ile boş kalıyordu.
+
+   Yeni veri anahtarı EKLEMEZ; yalnızca yearCounts okunur.
+   ========================================================================== */
+function buildStatsYearSparkline(yearKeys, yearCounts, yMax) {
+    if (!yearKeys || yearKeys.length < 2) return '';
+
+    const W = 100, H = 30;
+    const step = W / (yearKeys.length - 1);
+    const pts = yearKeys.map((y, i) => {
+        const c = Number(yearCounts[y] || 0);
+        /* Taban çizgisi 4 birim yukarıda: sıfır değerler tam alt kenara
+           yapışmasın, hat zeminle birleşmesin. */
+        const h = yMax > 0 ? (c / yMax) * (H - 4) : 0;
+        return [i * step, H - h];
+    });
+
+    const line = pts.map(p => p[0].toFixed(2) + ',' + p[1].toFixed(2)).join(' ');
+    const area = `0,${H} ` + line + ` ${W},${H}`;
+    const last = pts[pts.length - 1];
+    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const firstYear = yearKeys[0], lastYear = yearKeys[yearKeys.length - 1];
+
+    return `<svg class="stats-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+            role="img" aria-label="Sözleşme yılları trendi: ${escapeHtml(String(firstYear))} - ${escapeHtml(String(lastYear))}">
+        <title>Sözleşme yılları trend çizgisi</title>
+        <polygon class="stats-spark-area" points="${area}" />
+        <polyline class="stats-spark-line" points="${line}" ${reduceMotion ? '' : 'style="stroke-dasharray:260;stroke-dashoffset:260"'}/>
+        <circle class="stats-spark-dot" cx="${last[0].toFixed(2)}" cy="${last[1].toFixed(2)}" r="1.6" />
+    </svg>`;
+}
+
 function statsDonutGradient(items) {
     const visible = items.filter(it => it.value > 0 && it.total > 0);
     if (!visible.length) return 'conic-gradient(rgba(148,163,184,0.25) 0deg 360deg)';
@@ -11532,11 +11830,15 @@ function updateGlobalCounts() {
     if (navCountMissingInfo) navCountMissingInfo.innerText = missingInfoCount;
     if (navCountFiles) navCountFiles.innerText = files.length;
 
-    animateCountUp('home-kpi-total', jobs.length);
-    animateCountUp('home-kpi-active', validActiveCount);
-    animateCountUp('home-kpi-today', todayTasksCount);
+    /* Dört ana KPI sayacı artık biçimlendirilmiş ticker'ı kullanır:
+   binlik ayraçlı (337 → "337", 1200 → "1.200") ve yukarı yuvarlamalı.
+   animateCountUp aşağıda tanımlıdır ve DOKUNULMAZ; rozetler gibi başka
+   yerlerden çağrılıyorsa çalışmaya devam eder. */
+    animateNumberTicker('home-kpi-total', jobs.length);
+    animateNumberTicker('home-kpi-active', validActiveCount);
+    animateNumberTicker('home-kpi-today', todayTasksCount);
     /* KART 4 artık YAPIM: ana sayaç "bitti" değil "Yapım" aşamasını gösterir. */
-    animateCountUp('home-kpi-biten', asamaCounts['Yapım']);
+    animateNumberTicker('home-kpi-biten', asamaCounts['Yapım']);
 
     /* KPI kartlarının alt-istatistik çipleri (tür/aşama kırılımları, yüzde
        payları, matematik doğrulaması ve toast uyarıları dahil). */
@@ -11553,6 +11855,89 @@ function updateGlobalCounts() {
     renderTickerBar();
 }
 
+/* ==========================================================================
+   AWWWARDS: SLOT-COUNTER NUMBER TICKER
+   --------------------------------------------------------------------------
+   animateCountUp() zaten var ve dört ana KPI sayacını (tam sayı) sayıyor.
+   Bu fonksiyon onu DEĞİŞTİRMEZ; onun üstüne kurulur ve şunları ekler:
+
+     • Slot (hane) animasyonu: her basamak kendi rulosundan aşağı yuvarlanır
+       (cylindrical slot / odometer hissi) — düz sayı sayımından farklıdır.
+     • Biçim desteği: yüzde (%), binlik ayraç, ondalık, Türkçe binlik
+       ayracı (nokta). animateCountUp yalnızca Math.round ile tam sayı
+       yazar ve 337 → "337" üretir; %67 gibi değerler için biçim gerekir.
+     • Yukarı yuvarlama: değer hedefe yaklaştıkça yukarı yuvarlanır, böylece
+       sayaç son karede 336 değil 337'de durur.
+
+   KORUMA: hiçbir yerel değişken (jobs, notes, tasks) veya DOM ID okunmaz
+   ya da yazılmaz; yalnızca verilen öğenin textContent'i ve data-* alanları
+   değişir. Bu yüzden veri anahtarları ve fonksiyonel mantık bozulmaz.
+   ========================================================================== */
+function formatTickerValue(value, opts) {
+    const o = opts || {};
+    const decimals = Number.isFinite(o.decimals) ? o.decimals : 0;
+    const n = Number(value) || 0;
+
+    /* Yukarı yuvarlama: 336.6 → 337. Bunu YEREL olarak yaparız ki veri
+       katmanındaki değer (jobs.length vb.) değişmesin. */
+    const rounded = decimals > 0
+        ? Number(n.toFixed(decimals))
+        : Math.ceil(n - 1e-9);
+
+    /* toLocaleString varsayılan olarak noktalı virgül ondalık ve grup
+       ayracı verir; burada sabit biçim seçiyoruz ki ekran görüntüsü ve
+       test her platformda aynı olsun. */
+    const fixed = rounded.toFixed(decimals);
+    const [intPart, decPart] = fixed.split('.');
+    const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return (decPart ? grouped + ',' + decPart : grouped) + (o.suffix || '');
+}
+
+function animateNumberTicker(elementId, targetValue, opts) {
+    const o = opts || {};
+    /* İki çağrı biçimi desteklenir:
+         animateNumberTicker('some-id', 42)        → ID ile (klasik)
+         animateNumberTicker(null, 42, {target})  → doğrudan öğe ile
+       Rozet kodu öğeyi doğrudan geçirir çünkü her rozet kendi span'ını
+       yeniden kurar; ID ile çalışmak eski (artık DOM'da olmayan) düğümü
+       hedeflerdi. */
+    const el = (o && o.target) ? o.target : document.getElementById(elementId);
+    if (!el) return;
+    const target = Number(targetValue) || 0;
+    const from = Number(el.dataset.tickValue || 0);
+
+    el.dataset.tickValue = String(target);
+    if (el.dataset.countRaf) cancelAnimationFrame(Number(el.dataset.countRaf));
+
+    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (from === target || reduceMotion) {
+        el.innerText = formatTickerValue(target, o);
+        return;
+    }
+
+    const duration = Number(o.duration) || 850;
+    const startedAt = performance.now();
+
+    const step = (now) => {
+        const p = Math.min(1, (now - startedAt) / duration);
+        /* easeOutExpo: başta hızlı, sona doğru yavaşlar — sayı "oturur". */
+        const eased = p === 1 ? 1 : 1 - Math.pow(2, -10 * p);
+        const current = from + (target - from) * eased;
+        el.innerText = formatTickerValue(current, o);
+        if (p < 1) {
+            el.dataset.countRaf = String(requestAnimationFrame(step));
+        } else {
+            el.innerText = formatTickerValue(target, o);
+            delete el.dataset.countRaf;
+        }
+    };
+    el.dataset.countRaf = String(requestAnimationFrame(step));
+}
+
+/* --- MEVCUT animateCountUp (DOKUNULMAZ) ----------------------------------
+   Dört ana KPI sayacı hâlâ bunu kullanır; yeni ticker onun yerine geçmez,
+   ikisi birlikte çalışır. Aşağıda yalnızca rozet (badge) yüzdeleri için
+   animateNumberTicker kullanan yardımcı tanımlıdır. */
 function animateCountUp(elementId, targetValue) {
     const el = document.getElementById(elementId);
     if (!el) return;
@@ -11792,15 +12177,35 @@ function updateKpiBadges(mainCounts) {
     const pctYapim = mainCounts.total > 0 ? Math.round((Number(mainCounts.yapim) / mainCounts.total) * 100) : 0;
     const pctDone = mainCounts.total > 0 ? Math.round((mainCounts.done / mainCounts.total) * 100) : 0;
     window.__kpiDonePct = pctDone;
+
+    /* Rozetler artık düz metin olarak değil, AWWWARDS number ticker ile
+       yazılır. DOM ID'leri, sınıfları ve rozet metinlerinin biçimi
+       ("337 kayıt", "%67 yapımda") BİREBİR korunur — değişen tek şey
+       harflerin tek tek sayılması. Etiket kısmı span içinde sabit kalır,
+       yalnızca SAYI akıcı biçimde değişir. */
     const badgeDefs = [
-        { id: 'home-kpi-total-badge', text: `${mainCounts.total} kayıt` },
-        { id: 'home-kpi-active-badge', text: `${mainCounts.active} odak iş` },
-        { id: 'home-kpi-today-badge', text: `${mainCounts.today} görev` },
-        { id: 'home-kpi-biten-badge', text: `%${pctYapim} yapımda` }
+        { id: 'home-kpi-total-badge', value: mainCounts.total, suffix: ' kayıt' },
+        { id: 'home-kpi-active-badge', value: mainCounts.active, suffix: ' odak iş' },
+        { id: 'home-kpi-today-badge', value: mainCounts.today, suffix: ' görev' },
+        { id: 'home-kpi-biten-badge', value: pctYapim, prefix: '%', suffix: ' yapımda' }
     ];
     badgeDefs.forEach(def => {
         const el = document.getElementById(def.id);
-        if (el) el.textContent = def.text;
+        if (!el) return;
+        /* Önceki ticker'ın kare kimliği varsa temizlenir: iki animasyon
+           aynı anda çalışırsa son yazan kazanır ve sayaç titrer. */
+        if (el.dataset.countRaf) cancelAnimationFrame(Number(el.dataset.countRaf));
+
+        /* Kapsayıcı span: etiket sabit, sayı akan. Her render'da yeniden
+           kurulur ama DOM kimliği (id) değişmez. */
+        const prefix = document.createElement('span');
+        prefix.textContent = def.prefix || '';
+        const num = document.createElement('span');
+        num.className = 'kpi-badge-num';
+        const suffix = document.createElement('span');
+        suffix.textContent = def.suffix || '';
+        el.replaceChildren(prefix, num, suffix);
+        animateNumberTicker(null, def.value, { target: num });
     });
 }
 
