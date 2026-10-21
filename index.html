@@ -149,10 +149,12 @@
 
     <!-- SIDEBAR NAVIGATION -->
     <aside class="sidebar" id="sidebar">
-        <!-- KULLANICI TALEBİ: menünün en üstünde, menü genişliğince GÖRİNMEZ bir
-             daralt/büyüt alanı. Düğme gibi durmaz: kenarsız, zemin şeffaf;
-             hover'da yalnızca çok hafif bir zemin ve minik grip ikonu belirir.
-             Eski .sidebar-toggle-btn (sağ üstteki ok) bu alanla değiştirildi. -->
+        <!-- KULLANICI TALEBİ (v2): menünün en üstünde, menü genişliğince uzanan
+             belirgin daralt/büyüt alanı. Sidebar'ın en üst noktasından başlar
+             (üst padding dahil) ve 32px yüksekliğindedir: en üstteki dokunuşlar
+             artık kaçmaz. Modern pill görünümü: silik grip ikonu, hover'da marka
+             mavisi zemin + çerçeve + yumuşak ışık. Eski .sidebar-toggle-btn
+             (sağ üstteki ok) bu alanla değiştirildi. -->
         <div class="sidebar-collapse-zone" onclick="toggleSidebar()" title="Menüyü Daralt / Büyüt"
              role="button" tabindex="0" aria-label="Menüyü daralt veya büyüt">
             <i class="fa-solid fa-grip-lines"></i>
