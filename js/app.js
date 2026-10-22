@@ -11921,7 +11921,16 @@ function loadGuestJobFromCloud(jobId) {
 
     fetch(`${CLOUD_API_ENDPOINT}?t=${encodeURIComponent(Date.now())}`, { cache: 'no-store' })
         .then(r => {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
+            if (!r.ok) {
+                /* Hata gövdesi okunur: 503 (env eksik) ile diğer sunucu hataları
+                   ayırt edilir; kullanıcıya duruma göre mesaj gösterilir. */
+                return r.json().catch(() => ({})).then(errBody => {
+                    const err = new Error((errBody && errBody.error) ? errBody.error : 'HTTP ' + r.status);
+                    err.httpStatus = r.status;
+                    err.apiError = (errBody && errBody.error) || '';
+                    throw err;
+                });
+            }
             return r.json();
         })
         .then(payload => {
@@ -11936,8 +11945,16 @@ function loadGuestJobFromCloud(jobId) {
         })
         .catch(err => {
             hideGuestBlockingScreen();
-            showGuestBlockingScreen('Bağlantı hatası', 'İş kaydı şu anda alınamadı. İnternet bağlantınızı kontrol edip sayfayı yenileyin.', 'error');
-            if (typeof console !== 'undefined' && console.warn) console.warn('[guest] bulut yükleme hatası:', err);
+            const status = err && err.httpStatus;
+            const isConfig = status === 503 || /yapılandır/i.test(String((err && err.message) || ''));
+            if (isConfig) {
+                showGuestBlockingScreen('Bulut depo hazır değil', 'Sunucu tarafında bulut depo yapılandırması tamamlanmamış. Yöneticiniz ortam değişkenlerini tanımladığında bu form çalışacaktır. Lütfen yöneticinizle iletişime geçin.', 'error');
+            } else {
+                showGuestBlockingScreen('Bağlantı hatası', 'İş kaydı şu anda alınamadı (HTTP ' + (status || '?') + '). İnternet bağlantınızı kontrol edip sayfayı yenileyin.', 'error');
+            }
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('[guest] bulut yükleme hatası:', (err && err.message) || err, (err && err.apiError) ? '| API: ' + err.apiError : '');
+            }
         });
 }
 
@@ -12056,7 +12073,15 @@ function saveGuestJobToCloud() {
         body: JSON.stringify({ job: data })
     })
         .then(r => {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
+            if (!r.ok) {
+                /* API'nin JSON hata mesajı okunur (ör. 503 env eksik). */
+                return r.json().catch(() => ({})).then(errBody => {
+                    const err = new Error((errBody && errBody.error) ? errBody.error : 'HTTP ' + r.status);
+                    err.httpStatus = r.status;
+                    err.apiError = (errBody && errBody.error) || '';
+                    throw err;
+                });
+            }
             return r.json();
         })
         .then(() => {
@@ -12065,7 +12090,15 @@ function saveGuestJobToCloud() {
             lockGuestFormAfterSave();
         })
         .catch(err => {
-            if (typeof showToast === 'function') showToast('Kayıt gönderilemedi: ' + (err && err.message ? err.message : 'bağlantı hatası'), 'error');
+            const status = err && err.httpStatus;
+            const isConfig = status === 503 || /yapılandır/i.test(String((err && err.message) || ''));
+            const msg = isConfig
+                ? 'Kayıt gönderilemedi: sunucuda bulut depo yapılandırması eksik. Yöneticinizle iletişime geçin.'
+                : 'Kayıt gönderilemedi: ' + ((err && err.message) ? err.message : 'bağlantı hatası') + ' (HTTP ' + (status || '?') + ')';
+            if (typeof showToast === 'function') showToast(msg, 'error');
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('[guest] kayıt gönderilemedi:', (err && err.message) || err, (err && err.apiError) ? '| API: ' + err.apiError : '');
+            }
             const retryNote = document.getElementById('guest-retry-note');
             if (retryNote) { retryNote.style.display = 'block'; }
         })
@@ -12153,7 +12186,14 @@ function guestStampMs(job) {
 function fetchCloudJobs() {
     return fetch(`${CLOUD_API_ENDPOINT}?t=${encodeURIComponent(Date.now())}`, { cache: 'no-store' })
         .then(r => {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
+            if (!r.ok) {
+                /* API'nin JSON hata mesajı (ör. 503 env eksik) korunur. */
+                return r.json().catch(() => ({})).then(errBody => {
+                    const err = new Error((errBody && errBody.error) ? errBody.error : 'HTTP ' + r.status);
+                    err.httpStatus = r.status;
+                    throw err;
+                });
+            }
             return r.json();
         })
         .then(payload => {
@@ -12170,7 +12210,13 @@ function pushCloudJobs(jobsArray) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jobs: jobsArray })
     }).then(r => {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
+        if (!r.ok) {
+            return r.json().catch(() => ({})).then(errBody => {
+                const err = new Error((errBody && errBody.error) ? errBody.error : 'HTTP ' + r.status);
+                err.httpStatus = r.status;
+                throw err;
+            });
+        }
         return r.json();
     });
 }
@@ -12202,16 +12248,24 @@ function mergeCloudJobsIntoLocal(cloudJobs) {
     return { added, updated };
 }
 
-/* Yerel → bulut tam senkron (sessiz). */
+/* Yerel → bulut tam senkron (sessiz; panelde hiçbir gürültü çıkarmaz). */
 function syncJobsToCloud(reasonLabel) {
     if (!cloudSyncEnabled || typeof jobs === 'undefined' || !Array.isArray(jobs)) return Promise.resolve(false);
     return pushCloudJobs(jobs)
         .then(() => {
             try { localStorage.setItem(CLOUD_SYNC_STORAGE_FLAG, String(Date.now())); } catch (e) {}
+            /* Sessiz başarı logu: verilerin Upstash'e yazıldığı konsolda
+               doğrulanabilir; arayüzde bildirim gösterilmez. */
+            if (typeof console !== 'undefined' && console.info) {
+                console.info('[cloud] yaser_v10_jobs Upstash\'e yazıldı (' + jobs.length + ' kayıt, tetikleyen: ' + (reasonLabel || 'genel') + ')');
+            }
             return true;
         })
         .catch(err => {
-            if (typeof console !== 'undefined' && console.warn) console.warn('[cloud] gönderim başarısız (' + (reasonLabel || 'genel') + '):', err);
+            const detail = (err && err.httpStatus)
+                ? 'HTTP ' + err.httpStatus + ((err && err.message) ? ' — ' + err.message : '')
+                : String((err && err.message) || err);
+            if (typeof console !== 'undefined' && console.warn) console.warn('[cloud] Upstash yazımı başarısız (' + (reasonLabel || 'genel') + '): ' + detail);
             return false;
         });
 }
@@ -12229,10 +12283,16 @@ function syncJobsFromCloud(showToastOnMerge) {
                 if (showToastOnMerge && typeof showToast === 'function') {
                     showToast(`Bulut güncellemesi alındı: ${res.added} yeni, ${res.updated} güncellenen kayıt`, 'success');
                 }
+            } else if (typeof console !== 'undefined' && console.info) {
+                /* Sessiz log: bulut kontrolü sorunsuz tamamlandı. */
+                console.info('[cloud] bulut kontrolü tamam (' + cloudJobs.length + ' kayıt, değişiklik yok)');
             }
         })
         .catch(err => {
-            if (typeof console !== 'undefined' && console.warn) console.warn('[cloud] kontrol başarısız:', err);
+            const detail = (err && err.httpStatus)
+                ? 'HTTP ' + err.httpStatus + ((err && err.message) ? ' — ' + err.message : '')
+                : String((err && err.message) || err);
+            if (typeof console !== 'undefined' && console.warn) console.warn('[cloud] kontrol başarısız:', detail);
         })
         .finally(() => { cloudSyncInFlight = false; });
 }

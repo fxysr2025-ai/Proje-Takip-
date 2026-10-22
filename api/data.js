@@ -7,10 +7,14 @@
 
    DEPOLAMA
    Upstash Redis REST API (HTTP tabanlı; serverless'ta bağlantı havuzu
-   gerektirmediği için standart redis client yerine REST tercih edilir).
-   Gerekli environment değişkenleri (Vercel > Project > Settings > Environment Variables):
-     UPSTASH_REDIS_REST_URL    ör. https://xxxx.upstash.io
-     UPSTASH_REDIS_REST_TOKEN  REST token (yazma yetkili)
+   gerektirmemesi için standart redis client yerine REST tercih edilir).
+   Environment değişkenleri (Vercel > Project > Settings > Environment Variables)
+   — Upstash marka değişkenleri VEYA Vercel KV / Marketplace entegrasyonunun
+   ürettiği eşdeğer değişkenler kabul edilir (fallback zinciri):
+     URL:   UPSTASH_REDIS_REST_URL | KV_REST_API_URL | STORAGE_REST_API_URL
+     TOKEN: UPSTASH_REDIS_REST_TOKEN | KV_REST_API_TOKEN | STORAGE_REST_API_TOKEN
+   Hiçbiri bulunamazsa API 503 döner ve eksik olan değişken adlarını
+   Vercel fonksiyon loguna console.error ile yazar.
 
    VERİ ŞEMASI (DEĞİŞTİRME — mevcut uygulama düzeniyle birebir):
    Anahtar: "yaser_v10_jobs"  →  Değer: jobs[] dizisinin JSON'u.
@@ -25,23 +29,68 @@
 
 const JOBS_KEY = 'yaser_v10_jobs';
 
-/* Upstash REST URL'i sondaki eğik çizgiye karşı normalize edilir. */
+/* --- ENV DEĞİŞKENİ ÇÖZÜMLEME (fallback zinciri) ----------------------------
+   Upstash marka değişkenler VE Vercel KV / Marketplace entegrasyonlarının
+   ürettiği eşdeğer adlar desteklenir. URL ve token AYNI zincirden eşleşmeli:
+   farklı sağlayıcılardan karışım alınmaz (ör. Upstash URL + KV token). */
+const URL_ENV_CANDIDATES   = ['UPSTASH_REDIS_REST_URL', 'KV_REST_API_URL', 'STORAGE_REST_API_URL'];
+const TOKEN_ENV_CANDIDATES = ['UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_TOKEN', 'STORAGE_REST_API_TOKEN'];
+
+function envValueOf(candidates) {
+    for (const name of candidates) {
+        const val = process.env[name];
+        if (val && String(val).trim()) return { name, value: String(val).trim() };
+    }
+    return null;
+}
+
+/* Eşleşen ilk URL zinciri; token da aynı zincirde bulunmalı. */
+function resolveRedisEnv() {
+    for (const urlName of URL_ENV_CANDIDATES) {
+        const urlVal = process.env[urlName];
+        if (!urlVal || !String(urlVal).trim()) continue;
+        const tokenName = TOKEN_ENV_CANDIDATES[URL_ENV_CANDIDATES.indexOf(urlName)];
+        const tokenVal = process.env[tokenName];
+        if (tokenVal && String(tokenVal).trim()) {
+            return { urlName, tokenName, url: String(urlVal).trim().replace(/\/+$/, ''), token: String(tokenVal).trim() };
+        }
+    }
+    return null;
+}
+
 function getRedisUrl() {
-    const raw = process.env.UPSTASH_REDIS_REST_URL || '';
-    return raw.replace(/\/+$/, '');
+    const env = resolveRedisEnv();
+    return env ? env.url : '';
 }
 
 function redisConfigured() {
-    return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+    return Boolean(resolveRedisEnv());
+}
+
+/* Yapılandırma eksikse Vercel fonksiyon loguna detaylı teşhis yazar. */
+function logMissingRedisEnv() {
+    const foundUrls = URL_ENV_CANDIDATES.filter(n => process.env[n] && String(process.env[n]).trim());
+    const foundTokens = TOKEN_ENV_CANDIDATES.filter(n => process.env[n] && String(process.env[n]).trim());
+    console.error(
+        '[/api/data] 503: Bulut depo yapılandırılmadı. Gerekli çift bulunamadı.' +
+        ' Aranan URL değişkenleri: [' + URL_ENV_CANDIDATES.join(', ') + '] → bulunan: [' + (foundUrls.join(', ') || 'YOK') + '].' +
+        ' Aranan TOKEN değişkenleri: [' + TOKEN_ENV_CANDIDATES.join(', ') + '] → bulunan: [' + (foundTokens.join(', ') || 'YOK') + '].' +
+        ' Vercel > Project > Settings > Environment Variables bölümünden ör. UPSTASH_REDIS_REST_URL ve UPSTASH_REDIS_REST_TOKEN ekleyip yeniden dağıtın (deploy).'
+    );
 }
 
 /* Upstash REST komut çağrısı: GET <url>/<command>/<arg>
    Anahtar/değer path içinde taşındığı için URL-encode zorunludur. */
 async function redisCommand(command, arg) {
-    const url = `${getRedisUrl()}/${command}/${encodeURIComponent(arg)}`;
+    const env = resolveRedisEnv();
+    if (!env) {
+        logMissingRedisEnv();
+        throw new Error('Bulut depo yapılandırması eksik (env değişkenleri okunamadı).');
+    }
+    const url = `${env.url}/${command}/${encodeURIComponent(arg)}`;
     const res = await fetch(url, {
         method: 'GET',
-        headers: { Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` }
+        headers: { Authorization: `Bearer ${env.token}` }
     });
     if (!res.ok) {
         throw new Error(`Upstash REST ${command} başarısız (HTTP ${res.status})`);
@@ -85,7 +134,8 @@ module.exports = async (req, res) => {
     }
 
     if (!redisConfigured()) {
-        sendJson(res, 503, { ok: false, error: 'Bulut depo yapılandırılmadı (UPSTASH_REDIS_REST_URL / TOKEN eksik).' });
+        logMissingRedisEnv();
+        sendJson(res, 503, { ok: false, error: 'Bulut depo yapılandırılmadı: UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN (veya KV_REST_API_URL / KV_REST_API_TOKEN) ortam değişkenleri tanımlı değil.' });
         return;
     }
 
