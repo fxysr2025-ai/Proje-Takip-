@@ -36,14 +36,6 @@ const JOBS_KEY = 'yaser_v10_jobs';
 const URL_ENV_CANDIDATES   = ['UPSTASH_REDIS_REST_URL', 'KV_REST_API_URL', 'STORAGE_REST_API_URL'];
 const TOKEN_ENV_CANDIDATES = ['UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_TOKEN', 'STORAGE_REST_API_TOKEN'];
 
-function envValueOf(candidates) {
-    for (const name of candidates) {
-        const val = process.env[name];
-        if (val && String(val).trim()) return { name, value: String(val).trim() };
-    }
-    return null;
-}
-
 /* Eşleşen ilk URL zinciri; token da aynı zincirde bulunmalı. */
 function resolveRedisEnv() {
     for (const urlName of URL_ENV_CANDIDATES) {
@@ -56,11 +48,6 @@ function resolveRedisEnv() {
         }
     }
     return null;
-}
-
-function getRedisUrl() {
-    const env = resolveRedisEnv();
-    return env ? env.url : '';
 }
 
 function redisConfigured() {
@@ -79,27 +66,70 @@ function logMissingRedisEnv() {
     );
 }
 
-/* Upstash REST komut çağrısı: GET <url>/<command>/<arg>
-   Anahtar/değer path içinde taşındığı için URL-encode zorunludur. */
-async function redisCommand(command, arg) {
+/* Upstash REST komut çağrısı — KOMUT DİZİSİ FORMATI (POST gövdeli).
+   ---------------------------------------------------------------------
+   NEDEN: Eski yöntem değeri URL path'e gömüyordu (/set/key\nvalue).
+   Büyük jobs dizileri ve newline/özel karakterler URL'i geçersiz kılıp
+   Upstash'ten HTTP 400 döndürüyordu. Standart ve güvenli yöntem:
+     POST {UPSTASH_URL}
+     Body: ["SET", "yaser_v10_jobs", "<json-string>"]
+     Headers: Authorization Bearer + Content-Type application/json
+   GET de aynı formatta gönderilir: ["GET", "yaser_v10_jobs"] */
+async function redisCommandArgs(args) {
     const env = resolveRedisEnv();
     if (!env) {
         logMissingRedisEnv();
         throw new Error('Bulut depo yapılandırması eksik (env değişkenleri okunamadı).');
     }
-    const url = `${env.url}/${command}/${encodeURIComponent(arg)}`;
-    const res = await fetch(url, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${env.token}` }
+    const res = await fetch(env.url, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${env.token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(args)
     });
+
+    /* Hata gövdesi (text/json) okunur ve loglanır: Upstash'in 400/401/413
+       gibi yanıtlarının gerçek nedeni konsolda görünür olur. */
     if (!res.ok) {
-        throw new Error(`Upstash REST ${command} başarısız (HTTP ${res.status})`);
+        const errText = await res.text().catch(() => '');
+        let errDetail = errText;
+        try { errDetail = JSON.stringify(JSON.parse(errText)); } catch (e) { /* düz metin olarak bırak */ }
+        console.error(
+            `[/api/data] Upstash REST ${args[0]} hatası: HTTP ${res.status}` +
+            (errDetail ? ` | yanıt gövdesi: ${errDetail.slice(0, 800)}` : ' | yanıt gövdesi boş')
+        );
+        throw new Error(`Upstash REST ${args[0]} başarısız (HTTP ${res.status})${errDetail ? ': ' + errDetail.slice(0, 200) : ''}`);
     }
-    const json = await res.json();
+
+    const json = await res.json().catch(() => null);
     if (json && json.error) {
-        throw new Error(`Upstash REST ${command} hatası: ${json.error}`);
+        console.error(`[/api/data] Upstash REST ${args[0]} uygulama hatası:`, json.error);
+        throw new Error(`Upstash REST ${args[0]} hatası: ${json.error}`);
     }
-    return json.result;
+    return json ? json.result : null;
+}
+
+/* jobs[] dizisini Upstash SET değeri olarak güvenle serileştirir.
+   Dairesel referans / BigInt gibi JSON'a dönüştürülemeyen yapılar
+   temiz bir hata mesajıyla yakalanır; yarım veri yazılmaz. */
+function serializeJobs(jobsArray) {
+    if (!Array.isArray(jobsArray)) {
+        throw new Error('serializeJobs: jobs dizisi değil (' + typeof jobsArray + ').');
+    }
+    try {
+        const json = JSON.stringify(jobsArray);
+        /* Upstash REST tek değer için ~1GB üst sınırına sahiptir; pratik eşik
+           olarak 80MB'ta erken uyarı veririz (500'e düşmeden teşhis edilir). */
+        const bytes = Buffer.byteLength(json, 'utf8');
+        if (bytes > 80 * 1024 * 1024) {
+            throw new Error('serializeJobs: yük çok büyük (' + Math.round(bytes / 1048576) + ' MB). Kayıt sayısını azaltın.');
+        }
+        return json;
+    } catch (err) {
+        throw new Error('jobs dizisi JSON\'a çevrilemedi (dairesel referans veya desteklenmeyen tip olabilir): ' + (err && err.message));
+    }
 }
 
 /* Depodaki diziyi oku; bozuk/eksik veride güvenli boş dizi. */
@@ -142,7 +172,7 @@ module.exports = async (req, res) => {
     try {
         /* ---------------- GET: tüm jobs dizisini döndür ---------------- */
         if (req.method === 'GET') {
-            const raw = await redisCommand('get', JOBS_KEY);
+            const raw = await redisCommandArgs(['GET', JOBS_KEY]);
             sendJson(res, 200, { ok: true, jobs: parseStoredJobs(raw) });
             return;
         }
@@ -162,7 +192,7 @@ module.exports = async (req, res) => {
                 return;
             }
 
-            const current = parseStoredJobs(await redisCommand('get', JOBS_KEY));
+            const current = parseStoredJobs(await redisCommandArgs(['GET', JOBS_KEY]));
             let next;
 
             if (incomingJobs) {
@@ -182,7 +212,12 @@ module.exports = async (req, res) => {
                 else next.unshift(incomingJob);
             }
 
-            await redisCommand('set', `${JOBS_KEY}\n${JSON.stringify(next)}`);
+            /* Serileştirme ÖNCE yapılır: dairesel referans / aşırı büyük yük
+               gibi sorunlar 500'e düşmeden yakalanır. */
+            const serialized = serializeJobs(next);
+
+            /* SET: komut dizisi formatı — değer URL'de değil, POST gövdesinde. */
+            await redisCommandArgs(['SET', JOBS_KEY, serialized]);
 
             sendJson(res, 200, { ok: true, jobs: next, count: next.length });
             return;
