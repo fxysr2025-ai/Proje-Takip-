@@ -1399,7 +1399,11 @@
     <div class="modal-card modal-large-split" onclick="event.stopPropagation();">
         <div class="modal-header">
             <h3 id="job-modal-title">İş Kaydı Ekle / Düzenle</h3>
-            <button class="btn-icon" onclick="closeJobModal()"><i class="fa-solid fa-xmark"></i></button>
+            <!-- GUEST FORM MODE: X butonu yalnızca guest modda görünür ve
+                 sayfayı kapatmaz; formu kilitli onay ekranına bırakır.
+                 Normal panelde X (closeJobModal) aynen korunur. -->
+            <button class="btn-icon guest-only" id="guest-close-btn" style="display:none;" onclick="handleGuestCloseClick()" title="Formu kapat"><i class="fa-solid fa-xmark"></i></button>
+            <button class="btn-icon admin-only-btn" onclick="closeJobModal()"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <div class="modal-body">
             <input type="hidden" id="form-job-id">
@@ -1557,8 +1561,16 @@
             </div>
         </div>
         <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="closeJobModal()">İptal</button>
-            <button class="btn btn-primary" onclick="saveJob()">Kaydet</button>
+            <!-- GUEST FORM MODE butonları: yalnızca body.guest-form-mode
+                 iken görünür. Kaydet doğrudan /api/data uç noktasına POST
+                 eder; LocalStorage'a hiç yazmaz. -->
+            <span id="guest-retry-note" class="guest-only guest-retry-note" style="display:none;">
+                <i class="fa-solid fa-triangle-exclamation"></i> Gönderim başarısız oldu, tekrar deneyin.
+            </span>
+            <button class="btn btn-primary guest-only" id="guest-save-btn" style="display:none;" onclick="saveGuestJobToCloud()"><i class="fa-solid fa-cloud-arrow-up"></i> Buluta Kaydet</button>
+            <!-- Yönetici butonları: guest modda CSS ile gizlenir. -->
+            <button class="btn btn-secondary admin-only-btn" onclick="closeJobModal()">İptal</button>
+            <button class="btn btn-primary admin-only-btn" onclick="saveJob()">Kaydet</button>
         </div>
     </div>
 </div>
@@ -1758,5 +1770,128 @@
 </div>
 
 <script src="js/app.js"></script>
+<!-- ==========================================================================
+     GUEST FORM MODE STİLLERİ
+     --------------------------------------------------------------------------
+     Turquoise Mist / Liquid Glass görsel dili korunur: tema değişkenleri
+     (var(--surface-1), var(--glass-reflection), var(--edge-subtle)...) ve
+     mevcut modal-card kullanılır. body.guest-form-mode iken:
+       - .guest-only        → görünür
+       - .admin-only-btn    → gizli
+     normal modda tam tersi (yalnızca guest-only display:none kalır).
+     ========================================================================== -->
+<style id="guest-form-mode-styles">
+    /* --- Normal mod: guest butonları asla görünmez --- */
+    .guest-only { display: none !important; }
+
+    /* --- GUEST MOD YERLEŞİMİ --- */
+    body.guest-form-mode .guest-only { display: revert !important; }
+    body.guest-form-mode .guest-only#guest-close-btn,
+    body.guest-form-mode .guest-only#guest-save-btn { display: inline-flex !important; }
+    body.guest-form-mode .admin-only-btn { display: none !important; }
+
+    /* Form kartı tam ekran ortalanmış bağımsız pencere gibi davranır. */
+    body.guest-form-mode #job-modal {
+        position: fixed; inset: 0; z-index: 5000;
+        display: flex; align-items: center; justify-content: center;
+        padding: 18px;
+        background: rgba(8, 12, 24, 0.55);
+        backdrop-filter: blur(18px) saturate(150%);
+        -webkit-backdrop-filter: blur(18px) saturate(150%);
+    }
+    body.guest-form-mode #job-modal .modal-card {
+        width: min(1080px, 96vw);
+        max-height: 92vh;
+        display: flex; flex-direction: column;
+        box-shadow: var(--elev-4, 0 24px 60px rgba(0,0,0,.5)), var(--edge-inset-hi, none);
+        background-image: var(--glass-reflection);
+        animation: guestCardIn .38s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes guestCardIn {
+        from { opacity: 0; transform: translateY(14px) scale(0.985); }
+        to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        body.guest-form-mode #job-modal .modal-card { animation: none; }
+    }
+
+    /* Kaydet sonrası kilit: kart hafif soluk, etkileşim kapalı. */
+    body.guest-form-mode #job-modal.guest-locked .modal-body {
+        opacity: 0.45; pointer-events: none; user-select: none; filter: saturate(0.7);
+    }
+
+    /* Uyarı/not şeridi (gönderim hatası) */
+    .guest-retry-note {
+        font-size: 11.5px; font-weight: 700; color: var(--color-amber);
+        margin-right: auto; display: inline-flex; align-items: center; gap: 6px;
+    }
+
+    /* --- TAM EKRAN BİLGİLENDİRME / ONAY KATMANI (cam efektli) --- */
+    .guest-block-overlay {
+        position: fixed; inset: 0; z-index: 6000;
+        display: flex; align-items: center; justify-content: center;
+        padding: 16px;
+        opacity: 0; pointer-events: none;
+        background: rgba(8, 12, 24, 0.58);
+        backdrop-filter: blur(22px) saturate(160%);
+        -webkit-backdrop-filter: blur(22px) saturate(160%);
+        transition: opacity var(--transition-normal, .3s ease);
+    }
+    .guest-block-overlay.visible { opacity: 1; pointer-events: auto; }
+
+    .guest-block-card {
+        width: min(460px, 94vw);
+        text-align: center;
+        padding: 34px 30px 30px;
+        border-radius: var(--app-radius, 18px);
+        background: var(--surface-1);
+        background-image: var(--glass-reflection);
+        border: var(--edge-subtle);
+        box-shadow: var(--elev-4, 0 24px 60px rgba(0,0,0,.5));
+        transform: translateY(10px) scale(0.97);
+        transition: transform .35s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .guest-block-overlay.visible .guest-block-card { transform: translateY(0) scale(1); }
+
+    .guest-block-icon {
+        width: 64px; height: 64px; margin: 0 auto 16px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 26px; color: var(--color-primary);
+        border-radius: 50%;
+        background: rgba(56, 189, 248, 0.12);
+        border: var(--edge-subtle);
+    }
+    .guest-block-overlay.is-success .guest-block-icon {
+        color: var(--color-emerald, #22c55e);
+        background: rgba(34, 197, 94, 0.12);
+    }
+    .guest-block-overlay.is-error .guest-block-icon,
+    .guest-block-overlay:not(.is-success):not(.is-error).visible .guest-block-icon.fa-triangle-exclamation {
+        color: var(--color-rose, #f43f5e);
+        background: rgba(244, 63, 94, 0.12);
+    }
+
+    .guest-block-title {
+        font-family: var(--font-title, 'Outfit', sans-serif);
+        font-size: 19px; font-weight: 800; letter-spacing: 0.2px;
+        color: var(--txt-main); margin-bottom: 10px;
+    }
+    .guest-block-message {
+        font-size: 13.4px; line-height: 1.6; font-weight: 500;
+        color: var(--txt-muted);
+    }
+
+    /* Onay durumunda ikon ve çerçeve yeşile döner; kartta hafif parıltı. */
+    .guest-block-overlay.is-success .guest-block-card {
+        border-color: rgba(34, 197, 94, 0.45);
+        box-shadow: var(--elev-4, 0 24px 60px rgba(0,0,0,.5)), 0 0 40px rgba(34, 197, 94, 0.12);
+    }
+
+    [data-theme="light"] .guest-block-overlay { background: rgba(8, 47, 54, 0.35); }
+    [data-theme="light"] .guest-block-overlay.is-success .guest-block-card {
+        border-color: rgba(22, 163, 74, 0.4);
+        box-shadow: 0 18px 44px rgba(8, 47, 54, 0.22), 0 0 34px rgba(34, 197, 94, 0.12);
+    }
+</style>
 </body>
 </html>

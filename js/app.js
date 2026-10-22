@@ -1518,6 +1518,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const npInput = document.getElementById('zk-new-password');
     if (npInput) npInput.addEventListener('input', updateZkStrengthMeter);
 
+    /* --- GUEST FORM MODE: kısıtlı dış form modunda master parola
+       SORULMAZ ve normal boot zinciri hiç başlatılmaz. */
+    if (typeof initGuestFormMode === 'function' && initGuestFormMode()) {
+        return;
+    }
+
     /* --- UÇTAN UCA ŞİFRELEME: uygulama verisi yüklenmeden ÖNCE master parola
        istenir. Kilit açılana kadar loadAllData()/renderCurrentView() çalışmaz,
        dolayısıyla çözülmemiş hiçbir veri ekrana da gelmez. Web Crypto destek
@@ -1526,6 +1532,13 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function bootAfterUnlock() {
+    /* GUEST FORM MODE: kısıtlı dış form modundaysa normal panel akışı
+       TAMAMEN atlanır. loadAllData() çağrılmaz → localStorage'daki diğer
+       yaser_v10_* iş verileri RAM'e hiç alınmaz (sıfır sızma). */
+    if (typeof initGuestFormMode === 'function' && initGuestFormMode()) {
+        return;
+    }
+
     startSplashLoader();
     startLiveClock();
     initNumberFields();
@@ -1565,6 +1578,13 @@ function bootAfterUnlock() {
             console.warn('[zk] GitHub senkronizasyonu başarısız:', err);
         });
     }
+    /* BULUT SENKRONİZASYONU (/api/data): her yerel kayıtta buluta yazılır;
+       panel açılışında ve 60 sn'de bir buluttan gelen güncellemeler
+       yaser_v10_jobs dizisine ID bazlı birleştirilir. Sessiz çalışır; API
+       yapılandırılmamışsa yalnızca konsol uyarısı verir, uygulama akışı
+       hiç etkilenmez. */
+    if (typeof hookSaveAllDataForCloudSync === 'function') hookSaveAllDataForCloudSync();
+    if (typeof initCloudSyncWatcher === 'function') initCloudSyncWatcher();
     populateCityDropdown();
     
     document.getElementById('todo-input-date').value = taskDateKey();
@@ -8478,6 +8498,7 @@ function renderActiveJobsTable() {
                     <div class="action-btns" style="justify-content:center;">
                         <button class="btn-icon" title="Detay" onclick="event.stopPropagation(); viewJobDetail('${j.id}')"><i class="fa-solid fa-eye"></i></button>
                         <button class="btn-icon" title="Düzenle" onclick="event.stopPropagation(); openJobModal('${j.id}')"><i class="fa-solid fa-pen"></i></button>
+                        <button class="btn-icon" title="Dış Form Linki Kopyala" onclick="event.stopPropagation(); copyGuestFormLink('${j.id}')"><i class="fa-solid fa-link"></i></button>
                         <button class="btn-icon delete" title="Aktif Listeden Çıkar" onclick="event.stopPropagation(); removeActiveJob('${j.id}')"><i class="fa-solid fa-trash-can"></i></button>
                     </div>
                 </td>
@@ -8828,6 +8849,7 @@ function renderCustomListTable() {
                     <div class="action-btns" style="justify-content:center;">
                         <button class="btn-icon" title="Detay" onclick="event.stopPropagation(); viewJobDetail('${j.id}')"><i class="fa-solid fa-eye"></i></button>
                         <button class="btn-icon" title="Düzenle" onclick="event.stopPropagation(); openJobModal('${j.id}')"><i class="fa-solid fa-pen"></i></button>
+                        <button class="btn-icon" title="Dış Form Linki Kopyala" onclick="event.stopPropagation(); copyGuestFormLink('${j.id}')"><i class="fa-solid fa-link"></i></button>
                         <button class="btn-icon delete" title="Sil" onclick="event.stopPropagation(); deleteJob('${j.id}')"><i class="fa-solid fa-trash-can"></i></button>
                     </div>
                 </td>
@@ -9280,6 +9302,7 @@ function renderProjectsTable() {
                     <div class="action-btns" style="justify-content:center;">
                         <button class="btn-icon" title="Detay" onclick="event.stopPropagation(); viewJobDetail('${j.id}')"><i class="fa-solid fa-eye"></i></button>
                         <button class="btn-icon" title="Düzenle" onclick="event.stopPropagation(); openJobModal('${j.id}')"><i class="fa-solid fa-pen"></i></button>
+                        <button class="btn-icon" title="Dış Form Linki Kopyala" onclick="event.stopPropagation(); copyGuestFormLink('${j.id}')"><i class="fa-solid fa-link"></i></button>
                         <button class="btn-icon delete" title="Sil" onclick="event.stopPropagation(); openSecurityDeleteModal('${j.id}')"><i class="fa-solid fa-trash-can"></i></button>
                     </div>
                 </td>
@@ -11717,3 +11740,527 @@ document.addEventListener('click', (e) => {
         card.setAttribute('aria-expanded', 'false');
     }
 });
+
+
+/* ==========================================================================
+   GUEST FORM MODE — KISITLI DIŞ FORM GÖRÜNÜMÜ
+   --------------------------------------------------------------------------
+   URL:  ?mode=guest_form&job=JOB_ID
+   Bu modda sayfa YALNIZCA tek amaçla çalışır: linkteki iş kaydının
+   "İş Kaydı Ekle / Düzenle" formunu tam ekran bağımsız olarak göstermek.
+
+   VERİ SIZDIRMA KORUMASI (sıfır sızma hedefi):
+   - initGuestFormMode(), bootAfterUnlock()'ın EN BAŞINDA çağrılır; guest
+     moddaysa loadAllData() DAHA ÇAĞRILMADAN mod aktifleşir ve boot zinciri
+     kesilir → localStorage'daki hiçbir yaser_v10_* verisi RAM'e yüklenmez,
+     hiçbir panel/harita çizilmez, hiçbir zamanlayıcı başlamaz.
+   - Ek savunma olarak ana uygulama elemanları DOM'dan fiziksel olarak
+     remove() edilir; yalnızca #job-modal ve gereken arka plan katmanları
+     bırakılır. ZK kilit katmanı (#zk-lock-overlay) de kaldırılır.
+   ========================================================================== */
+
+const GUEST_MODE_URL_PARAM  = 'mode';
+const GUEST_MODE_URL_VALUE  = 'guest_form';
+const GUEST_JOB_URL_PARAM   = 'job';
+const CLOUD_API_ENDPOINT    = '/api/data';
+
+function isGuestFormMode() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        return params.get(GUEST_MODE_URL_PARAM) === GUEST_MODE_URL_VALUE;
+    } catch (e) {
+        return false;
+    }
+}
+
+function getGuestJobIdFromUrl() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        return params.get(GUEST_JOB_URL_PARAM) || '';
+    } catch (e) {
+        return '';
+    }
+}
+
+/* Guest modda body'ye sınıf yazar; CSS guest yerleşimini bu sınıfla kurar. */
+function applyGuestModeClass() {
+    document.body.classList.add('guest-form-mode');
+}
+
+/* Ana uygulama iskeletini DOM'dan kaldırır: sidebar, topbar, tüm paneller,
+   splash, ekran koruyucu, ZK kilit katmanı ve diğer overlay'ler. */
+function stripAppDomForGuestMode() {
+    const removeIds = [
+        'app-layout', 'splash-screen', 'screensaver-overlay', 'dashboard-drawer',
+        'notif-popover', 'zk-lock-overlay', 'app-toast-wrap',
+        'map-holo', 'experts-hover-tooltip'
+    ];
+    removeIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+    });
+    /* ID ile yakalanamayan katmanlar: tüm modal overlay'leri içinden yalnızca
+       job-modal DIŞINDAKİLER kaldırılır. */
+    Array.prototype.forEach.call(document.querySelectorAll('.modal-overlay'), function (ov) {
+        if (ov.id !== 'job-modal' && ov.parentNode) ov.parentNode.removeChild(ov);
+    });
+    /* Sarmalayıcılar her kurulumda ID'li değildir; class ile de temizlenir. */
+    Array.prototype.forEach.call(document.querySelectorAll('.app-layout, .main-wrapper, .sidebar'), function (el) {
+        if (el.parentNode) el.parentNode.removeChild(el);
+    });
+}
+
+let guestModeActivated = false;
+
+/* Guest modda boot zincirini KESER: normal panel hiç başlatılmaz.
+   Dönüş true ise çağıran taraf (DOMContentLoaded / bootAfterUnlock)
+   akışı sürdürmez. Idempotent: ikinci çağrıda tekrar tetiklenmez. */
+function initGuestFormMode() {
+    if (!isGuestFormMode()) return false;
+    if (guestModeActivated) return true;
+    guestModeActivated = true;
+
+    applyGuestModeClass();
+
+    /* Splash ve kilit katmanı guest formu KAPATMASIN: hemen kaldır. */
+    stripAppDomForGuestMode();
+
+    /* Bağımsız guest akışını başlat, normal akışı çalıştırma. */
+    bootGuestFormFlow();
+    return true;
+}
+
+/* Bağımsız guest akışı: buluttan iş verisini çek, formu doldur, kaydet. */
+function bootGuestFormFlow() {
+    const jobId = getGuestJobIdFromUrl();
+
+    if (!jobId) {
+        showGuestBlockingScreen('Geçersiz bağlantı', 'Bu bağlantıda iş kaydı bilgisi bulunamadı. Lütfen yöneticinizin paylaştığı güncel bağlantıyı kullanın.');
+        return;
+    }
+
+    /* Form dropdown'ları: yalnızca seçim listeleri için varsayılan
+       ayarlarla doldurulur (localStorage verisi OKUNMAZ). */
+    try { populateGuestDropdowns(); } catch (e) { /* form yine de görünür kalır */ }
+
+    loadGuestJobFromCloud(jobId);
+}
+
+/* Guest dropdown'ları: settings listesi localStorage'dan DEĞİL,
+   varsayılan dropdown tanımlarından (defaultDropdownSettings) kurulur. */
+function populateGuestDropdowns() {
+    const fill = (id, list) => {
+        const el = document.getElementById(id);
+        if (!el || !Array.isArray(list)) return;
+        el.innerHTML = list.map(v => `<option value="${escapeHtml(String(v))}">${escapeHtml(String(v))}</option>`).join('');
+    };
+    const dd = (typeof defaultDropdownSettings === 'object' && defaultDropdownSettings) ? defaultDropdownSettings : {};
+    fill('form-section', dd.projeTuru || dd.section);
+    fill('form-tur', dd.tur);
+    fill('form-protokol', dd.protokol);
+    fill('form-asama', dd.asama);
+    fill('form-avan-uygolama', dd.avanUygulama);
+    fill('form-proje', dd.projeMusaviri);
+    fill('form-alt-yuklenici', dd.altYuklenici);
+    fill('form-insaat-musaviri', dd.insaatMusaviri);
+    ['mimari','statik','mekanik','elektrik','altyapi','peyzaj','zemin','plankote'].forEach(k => {
+        fill('expert-' + k, dd[k] || dd.experts);
+    });
+    fillIlDropdownForGuest();
+}
+
+/* İl listesi: D3 harita verisi guest modda yüklenmez; gömülü statik 81 il
+   listesi kullanılır (harita modülüne bağımlılık yok, ek istek yok). */
+function fillIlDropdownForGuest() {
+    const el = document.getElementById('form-il');
+    if (!el) return;
+    const TR_ILLER = ['Adana','Adıyaman','Afyonkarahisar','Ağrı','Aksaray','Amasya','Ankara','Antalya','Ardahan','Artvin','Aydın','Balıkesir','Bartın','Batman','Bayburt','Bilecik','Bingöl','Bitlis','Bolu','Burdur','Bursa','Çanakkale','Çankırı','Çorum','Denizli','Diyarbakır','Düzce','Edirne','Elazığ','Erzincan','Erzurum','Eskişehir','Gaziantep','Giresun','Gümüşhane','Hakkari','Hatay','Iğdır','Isparta','İstanbul','İzmir','Kahramanmaraş','Karabük','Karaman','Kars','Kastamonu','Kayseri','Kırıkkale','Kırklareli','Kırşehir','Kilis','Kocaeli','Konya','Kütahya','Malatya','Manisa','Mardin','Mersin','Muğla','Muş','Nevşehir','Niğde','Ordu','Osmaniye','Rize','Sakarya','Samsun','Siirt','Sinop','Sivas','Şanlıurfa','Şırnak','Tekirdağ','Tokat','Trabzon','Tunceli','Uşak','Van','Yalova','Yozgat','Zonguldak'];
+    el.innerHTML = '<option value=""></option>' + TR_ILLER.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+}
+
+/* Guest formu etrafında tam ekran yarı saydam katman; mesaj / yükleniyor /
+   onay ekranı bu katmanda gösterilir (Liquid Glass dilinde). */
+function showGuestBlockingScreen(title, message, variant) {
+    let overlay = document.getElementById('guest-block-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'guest-block-overlay';
+        overlay.className = 'guest-block-overlay';
+        overlay.innerHTML = [
+            '<div class="guest-block-card">',
+            '    <div class="guest-block-icon"><i class="fa-solid fa-file-pen"></i></div>',
+            '    <div class="guest-block-title" id="guest-block-title"></div>',
+            '    <div class="guest-block-message" id="guest-block-message"></div>',
+            '</div>'
+        ].join('');
+        document.body.appendChild(overlay);
+    }
+    const t = document.getElementById('guest-block-title');
+    const m = document.getElementById('guest-block-message');
+    if (t) t.textContent = title || '';
+    if (m) m.textContent = message || '';
+    overlay.classList.remove('is-success', 'is-error');
+    if (variant === 'success') overlay.classList.add('is-success');
+    if (variant === 'error') overlay.classList.add('is-error');
+    overlay.classList.add('visible');
+    return overlay;
+}
+
+function hideGuestBlockingScreen() {
+    const overlay = document.getElementById('guest-block-overlay');
+    if (overlay) overlay.classList.remove('visible');
+}
+
+/* Buluttan yalnızca ilgili işi bulup formu doldurur. Tüm dizi RAM'e alınsa
+   bile ekrana YALNIZCA hedef kayıt yansıtılır; diğer kayıtlar hiçbir panele
+   yazılmaz (sayfada panel zaten yok). */
+function loadGuestJobFromCloud(jobId) {
+    const jobIdStr = String(jobId || '');
+    if (!jobIdStr) return;
+    showGuestBlockingScreen('Yükleniyor', 'İş kaydı buluttan alınıyor...', 'loading');
+
+    fetch(`${CLOUD_API_ENDPOINT}?t=${encodeURIComponent(Date.now())}`, { cache: 'no-store' })
+        .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then(payload => {
+            hideGuestBlockingScreen();
+            const list = (payload && Array.isArray(payload.jobs)) ? payload.jobs : [];
+            const job = list.find(j => j && String(j.id) === jobIdStr);
+            if (!job) {
+                showGuestBlockingScreen('Kayıt bulunamadı', 'İstediğiniz iş kaydı bulutta bulunamadı. Lütfen yöneticinizle iletişime geçin.', 'error');
+                return;
+            }
+            openJobModalForGuest(job);
+        })
+        .catch(err => {
+            hideGuestBlockingScreen();
+            showGuestBlockingScreen('Bağlantı hatası', 'İş kaydı şu anda alınamadı. İnternet bağlantınızı kontrol edip sayfayı yenileyin.', 'error');
+            if (typeof console !== 'undefined' && console.warn) console.warn('[guest] bulut yükleme hatası:', err);
+        });
+}
+
+/* Guest form doldurma: openJobModal ile aynı alan haritası, ama veri
+   kaynağı buluttan gelen TEK iş nesnesi. */
+function openJobModalForGuest(job) {
+    const j = job || {};
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v === undefined || v === null) ? '' : String(v); };
+
+    document.getElementById('job-modal').classList.add('active');
+    document.body.classList.add('guest-modal-open');
+
+    const titleEl = document.getElementById('job-modal-title');
+    if (titleEl) titleEl.textContent = 'İş Kaydı Güncelle — Dış Form';
+
+    setVal('form-job-id', j.id || '');
+    setVal('form-section', j.section || '250Bin');
+    setVal('form-tur', j.tur || '-');
+    setVal('form-protokol', j.protokol || '-');
+    setVal('form-asama', j.asama || 'Yapım');
+    setVal('form-avan-uygolama', j.avan_uygolama || '-');
+    setVal('form-il', j.il || '');
+    setVal('form-ilce', j.ilce || '');
+    setVal('form-is-tanimi', j.is_tanimi || '');
+    const skipEl = document.getElementById('form-skip-data-completion');
+    if (skipEl) skipEl.checked = Boolean(j.skipDataCompletion);
+    setVal('form-folder-path', j.folder_path || '');
+    setVal('form-proje', j.proje || '-');
+    setVal('form-insaat-alani', j.insaat_alani || '');
+    setVal('form-alt-yuklenici', j.alt_yuklenici || '-');
+    setVal('form-diger-daire', j.digerDaire || '');
+    setVal('form-ihale-yazisi', j.ihale_yazisi || '');
+    setVal('form-ihale-tarihi', j.ihale_tarihi || '');
+    setVal('form-sozlesme-tarihi', j.sozlesme_tarihi || '');
+    setVal('form-start-date', j.start_date || '');
+    setVal('form-end-date', j.end_date || '');
+    setVal('form-ihale-bedeli', j.ihale_bedeli || '');
+    if (typeof formatNumberFieldValue === 'function') {
+        try { formatNumberFieldValue(document.getElementById('form-insaat-alani'), false); } catch (e) {}
+        try { formatNumberFieldValue(document.getElementById('form-ihale-bedeli'), false); } catch (e) {}
+    }
+    setVal('form-insaat-musaviri', j.insaat_musaviri || '-');
+    setVal('form-yuklenici', j.yuklenici || '');
+    setVal('form-important-notes', j.important_notes || '');
+
+    const ex = j.experts || {};
+    ['mimari','statik','mekanik','elektrik','altyapi','peyzaj','zemin','plankote'].forEach(k => {
+        const el = document.getElementById('expert-' + k);
+        if (el) el.value = ex[k] || '-';
+    });
+
+    /* Timeline: kaydın kendi gelişme tarihçesi (yalnızca bu işe ait). */
+    tempTimeline = Array.isArray(j.timeline) ? JSON.parse(JSON.stringify(j.timeline)) : [];
+    if (typeof renderFormTimeline === 'function') renderFormTimeline();
+
+    /* Başlangıç/teslim alanlarının görünürlüğü aşamaya bağlıdır. */
+    if (typeof updateDeadlineFieldsVisibility === 'function') updateDeadlineFieldsVisibility();
+}
+
+/* Guest Kaydet: formu saveJob ile aynı şemada toparlar, LocalStorage'a
+   HİÇ yazmaz, doğrudan bulut API'sine POST eder. */
+function saveGuestJobToCloud() {
+    const jobId = document.getElementById('form-job-id').value;
+    if (!jobId) {
+        showGuestBlockingScreen('Hata', 'İş kimliği bulunamadı, kayıt gönderilemedi.', 'error');
+        return;
+    }
+
+    /* saveJob ile birebir aynı alan şeması (yaser_v10_jobs düzeni korunur). */
+    const data = {
+        id: String(jobId),
+        section: document.getElementById('form-section').value,
+        tur: document.getElementById('form-tur') ? document.getElementById('form-tur').value : '-',
+        protokol: document.getElementById('form-protokol').value,
+        asama: document.getElementById('form-asama').value,
+        avan_uygolama: document.getElementById('form-avan-uygolama').value,
+        kapsam: "AFET",
+        il: document.getElementById('form-il').value,
+        ilce: document.getElementById('form-ilce').value,
+        is_tanimi: document.getElementById('form-is-tanimi').value,
+        skipDataCompletion: Boolean(document.getElementById('form-skip-data-completion').checked),
+        folder_path: document.getElementById('form-folder-path').value,
+        proje: document.getElementById('form-proje').value,
+        insaat_alani: typeof normalizeNumberFieldValue === 'function' ? normalizeNumberFieldValue('form-insaat-alani') : document.getElementById('form-insaat-alani').value,
+        alt_yuklenici: document.getElementById('form-alt-yuklenici').value,
+        digerDaire: document.getElementById('form-diger-daire').value,
+        ihale_yazisi: document.getElementById('form-ihale-yazisi').value,
+        ihale_tarihi: document.getElementById('form-ihale-tarihi').value,
+        sozlesme_tarihi: document.getElementById('form-sozlesme-tarihi').value,
+        ihale_bedeli: typeof normalizeNumberFieldValue === 'function' ? normalizeNumberFieldValue('form-ihale-bedeli') : document.getElementById('form-ihale-bedeli').value,
+        insaat_musaviri: document.getElementById('form-insaat-musaviri').value,
+        yuklenici: document.getElementById('form-yuklenici').value,
+        important_notes: document.getElementById('form-important-notes').value,
+        start_date: (typeof isJobDeadlineActive === 'function' && isJobDeadlineActive()) ? document.getElementById('form-start-date').value : '',
+        end_date: (typeof isJobDeadlineActive === 'function' && isJobDeadlineActive()) ? document.getElementById('form-end-date').value : '',
+        timeline: tempTimeline,
+        experts: {
+            mimari: document.getElementById('expert-mimari').value,
+            statik: document.getElementById('expert-statik').value,
+            mekanik: document.getElementById('expert-mekanik').value,
+            elektrik: document.getElementById('expert-elektrik').value,
+            altyapi: document.getElementById('expert-altyapi').value,
+            peyzaj: document.getElementById('expert-peyzaj').value,
+            zemin: document.getElementById('expert-zemin').value,
+            plankote: document.getElementById('expert-plankote').value
+        },
+        guest_updated_at: new Date().toISOString()
+    };
+
+    const saveBtn = document.getElementById('guest-save-btn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up fa-spin"></i> Buluta gönderiliyor...'; }
+
+    fetch(CLOUD_API_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job: data })
+    })
+        .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then(() => {
+            /* Cam efektli onay ekranı + form kilidi. */
+            showGuestBlockingScreen('Kayıt başarıyla iletildi, teşekkürler.', 'Girdiğiniz bilgiler yöneticiye ulaştı. Bu sayfayı artık kapatabilirsiniz.', 'success');
+            lockGuestFormAfterSave();
+        })
+        .catch(err => {
+            if (typeof showToast === 'function') showToast('Kayıt gönderilemedi: ' + (err && err.message ? err.message : 'bağlantı hatası'), 'error');
+            const retryNote = document.getElementById('guest-retry-note');
+            if (retryNote) { retryNote.style.display = 'block'; }
+        })
+        .finally(() => {
+            if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> Buluta Kaydet'; }
+        });
+}
+
+/* Onaydan sonra form alanlarını kilitler; kullanıcı ekranı kapatabilir
+   ama yeniden gönderemez (yenileme gerektirir). */
+function lockGuestFormAfterSave() {
+    const modal = document.getElementById('job-modal');
+    if (!modal) return;
+    modal.querySelectorAll('input, select, textarea, button').forEach(el => {
+        if (el.id === 'guest-close-btn') return;
+        el.disabled = true;
+    });
+    modal.classList.add('guest-locked');
+    const closeBtn = document.getElementById('guest-close-btn');
+    if (closeBtn) closeBtn.style.display = 'inline-flex';
+}
+
+/* Guest X butonu: sayfayı kapatamaz (tarayıcı güvenliği); onay/kilit
+   durumundaysa formu bırakır, değilse bilgilendirme gösterir. */
+function handleGuestCloseClick() {
+    const modal = document.getElementById('job-modal');
+    if (modal && modal.classList.contains('guest-locked')) {
+        modal.classList.remove('active');
+        return;
+    }
+    showToast('Devam etmek için formu doldurup "Buluta Kaydet"e basın.', 'info');
+}
+
+/* Yönetici panelinden kısıtlı dış form bağlantısı üretir. */
+function copyGuestFormLink(jobId) {
+    const idStr = String(jobId || '');
+    if (!idStr) return;
+    try {
+        const base = window.location.origin + window.location.pathname;
+        const link = `${base}?mode=guest_form&job=${encodeURIComponent(idStr)}`;
+        const applyUi = () => {
+            if (typeof showToast === 'function') showToast('Dış form bağlantısı panoya kopyalandı', 'success');
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(link).then(applyUi).catch(() => {
+                window.prompt('Bağlantı kopyalanamadı, elle kopyalayın:', link);
+            });
+        } else {
+            window.prompt('Bağlantı kopyalanamadı, elle kopyalayın:', link);
+        }
+    } catch (e) {
+        window.prompt('Bağlantı:', `${window.location.origin}${window.location.pathname}?mode=guest_form&job=${encodeURIComponent(idStr)}`);
+    }
+}
+
+
+/* ==========================================================================
+   BULUT SENKRONİZASYONU — YÖNETİCİ PANELİ /api/data KÖPRÜSÜ
+   --------------------------------------------------------------------------
+   Yönetici paneli açıldığında ve ardından periyodik olarak buluttaki
+   yaser_v10_jobs dizisi çekilir; yerel jobs[] ile ID bazlı birleştirilir.
+
+   ÇAKIŞMA KURALLARI (yerel veri ASLA kaybolmaz):
+   - Bulutta olup yerelde olmayan kayıt → yerle eklenir (başka cihaz/guest).
+   - Her iki tarafta da olan ve guest_updated_at damgası taşıyan kayıt →
+     yalnızca bulut sürümü DAHA YENİYSE güncellenir.
+   - Yerelde olup bulutta olmayan kayıt → yerelde kalır (silme yayılmaz).
+   - Yerelde düzenlenip saveAllData() ile yazılan her jobs[] dizisi arka
+     planda buluta da yazılır (tam senkron).
+   ========================================================================== */
+
+const CLOUD_SYNC_INTERVAL_MS  = 60000;   /* periyodik kontrol: 60 sn */
+const CLOUD_SYNC_STORAGE_FLAG = 'yaser_v10_cloud_sync_at';
+
+let cloudSyncTimerId = null;
+let cloudSyncInFlight = false;
+let cloudSyncEnabled = true;
+
+function guestStampMs(job) {
+    if (!job || !job.guest_updated_at) return 0;
+    const t = Date.parse(job.guest_updated_at);
+    return Number.isFinite(t) ? t : 0;
+}
+
+function fetchCloudJobs() {
+    return fetch(`${CLOUD_API_ENDPOINT}?t=${encodeURIComponent(Date.now())}`, { cache: 'no-store' })
+        .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then(payload => {
+            if (!payload || !payload.ok || !Array.isArray(payload.jobs)) {
+                throw new Error((payload && payload.error) || 'Bulut yanıtı geçersiz.');
+            }
+            return payload.jobs;
+        });
+}
+
+function pushCloudJobs(jobsArray) {
+    return fetch(CLOUD_API_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobs: jobsArray })
+    }).then(r => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+    });
+}
+
+/* Bulut → yerel birleştirme. return: { added, updated } */
+function mergeCloudJobsIntoLocal(cloudJobs) {
+    let added = 0;
+    let updated = 0;
+    if (!Array.isArray(cloudJobs) || typeof jobs === 'undefined' || !Array.isArray(jobs)) return { added, updated };
+
+    cloudJobs.forEach(cj => {
+        if (!cj || cj.id === undefined || cj.id === null) return;
+        const idx = jobs.findIndex(x => String(x.id) === String(cj.id));
+        if (idx === -1) {
+            jobs.push(cj);
+            added++;
+        } else {
+            const stamp = guestStampMs(cj);
+            /* Guest damgası yoksa bulut kaydı yerelin ÜZERİNE yazılmaz:
+               yöneticinin yerel düzenlemeleri korunur. */
+            if (stamp > 0 && stamp > guestStampMs(jobs[idx])) {
+                jobs[idx] = cj;
+                updated++;
+            }
+        }
+    });
+
+    if (added || updated) saveAllData();
+    return { added, updated };
+}
+
+/* Yerel → bulut tam senkron (sessiz). */
+function syncJobsToCloud(reasonLabel) {
+    if (!cloudSyncEnabled || typeof jobs === 'undefined' || !Array.isArray(jobs)) return Promise.resolve(false);
+    return pushCloudJobs(jobs)
+        .then(() => {
+            try { localStorage.setItem(CLOUD_SYNC_STORAGE_FLAG, String(Date.now())); } catch (e) {}
+            return true;
+        })
+        .catch(err => {
+            if (typeof console !== 'undefined' && console.warn) console.warn('[cloud] gönderim başarısız (' + (reasonLabel || 'genel') + '):', err);
+            return false;
+        });
+}
+
+/* Bulut → yerel kontrol; panel açılışında ve periyodik çağrılır. */
+function syncJobsFromCloud(showToastOnMerge) {
+    if (!cloudSyncEnabled || cloudSyncInFlight) return Promise.resolve();
+    cloudSyncInFlight = true;
+    return fetchCloudJobs()
+        .then(cloudJobs => {
+            const res = mergeCloudJobsIntoLocal(cloudJobs);
+            try { localStorage.setItem(CLOUD_SYNC_STORAGE_FLAG, String(Date.now())); } catch (e) {}
+            if ((res.added || res.updated)) {
+                if (typeof renderCurrentView === 'function') renderCurrentView();
+                if (showToastOnMerge && typeof showToast === 'function') {
+                    showToast(`Bulut güncellemesi alındı: ${res.added} yeni, ${res.updated} güncellenen kayıt`, 'success');
+                }
+            }
+        })
+        .catch(err => {
+            if (typeof console !== 'undefined' && console.warn) console.warn('[cloud] kontrol başarısız:', err);
+        })
+        .finally(() => { cloudSyncInFlight = false; });
+}
+
+/* Panel açılışında bir kez + periyodik zamanlayıcıyı kurar. */
+function initCloudSyncWatcher() {
+    if (!cloudSyncEnabled) return;
+
+    syncJobsFromCloud(true);
+
+    if (cloudSyncTimerId) clearInterval(cloudSyncTimerId);
+    cloudSyncTimerId = setInterval(() => {
+        /* Birleştirme ID bazlı ve idempotent; görünüm ne olursa olsun zararsız. */
+        syncJobsFromCloud(true);
+    }, CLOUD_SYNC_INTERVAL_MS);
+}
+
+/* saveAllData'yı sarmalar: her yerel kayıtta bulut da güncellenir.
+   globalThis üzerinden bağlanır; fonksiyon global kapsamda tanımlıdır. */
+function hookSaveAllDataForCloudSync() {
+    const target = (typeof globalThis !== 'undefined') ? globalThis : window;
+    if (typeof target.saveAllData === 'function' && !target.saveAllData.__cloudHooked) {
+        const original = target.saveAllData;
+        target.saveAllData = function () {
+            const result = original.apply(this, arguments);
+            syncJobsToCloud('saveAllData');
+            return result;
+        };
+        target.saveAllData.__cloudHooked = true;
+    }
+}
