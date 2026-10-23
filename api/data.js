@@ -23,11 +23,61 @@
            - job gönderilirse sunucu, mevcut dizideki eş ID'li kaydı günceller,
              yoksa ekler (upsert) ve TÜM diziyi döndürür.
            - jobs gönderilirse dizi aynen yazılır (yönetici tam senkronu).
+             Bu TOPLU yazım Master Parola ile YETKİLİDİR: parola
+             X-Master-Password başlığı ya da gövdede masterPassword alanı
+             olarak iletilir; eksik/hatalıysa 403 Forbidden döner.
    CORS: dış form aynı origin'de çalışır; yine de kısıtlı CORS başlıkları
    eklenir (ileride ayrı domain'den erişim gerekirse hazır olur).
    ========================================================================== */
 
+const crypto = require('crypto');
+
 const JOBS_KEY = 'yaser_v10_jobs';
+
+/* --- YÖNETİCİ (PRIVATE) YAZMA YETKİSİ --------------------------------------
+   Toplu bulut yazımı (POST { jobs:[...] }, saveAllData senkronu) yalnızca
+   Master Parola taşıyan isteklere açıktır. Parola istekte X-Master-Password
+   başlığı YA DA gövdede { masterPassword: "..." } alanı olarak gelebilir.
+   Beklenen parola Vercel ortam değişkeninden okunur (fallback zinciri):
+     APP_MASTER_PASSWORD | YASER_MASTER_PASSWORD
+   · Değişken tanımlıysa: parolasız / hatalı parolalı toplu yazım → 403.
+   · Değişken TANIMLI DEĞİLSE: toplu yazım güvenlik gereği tamamen kapalıdır
+     (503) — API parolasız asla açık kalmaz.
+   Guest form akışı (POST { job:{...} }) ve GET bu kontrolün DIŞINDADIR.
+   Karşılaştırma crypto.timingSafeEqual ile yapılır (zamanlama saldırısına
+   karşı sabit süre). */
+const MASTER_PASSWORD_ENV_CANDIDATES = ['APP_MASTER_PASSWORD', 'YASER_MASTER_PASSWORD'];
+
+function resolveMasterPassword() {
+    for (const name of MASTER_PASSWORD_ENV_CANDIDATES) {
+        const val = process.env[name];
+        if (val && String(val).trim()) return String(val).trim();
+    }
+    return '';
+}
+
+function masterPasswordConfigured() {
+    return Boolean(resolveMasterPassword());
+}
+
+/* Yapılandırma eksikse Vercel fonksiyon loguna teşhis yazar. */
+function logMissingMasterPassword() {
+    console.error(
+        '[/api/data] Toplu bulut yazımı (Private mod) için APP_MASTER_PASSWORD (veya YASER_MASTER_PASSWORD) ortam değişkeni tanımlı değil.' +
+        ' Değişkeni Vercel > Project > Settings > Environment Variables bölümüne ekleyip yeniden dağıtın;' +
+        ' tanımlı olana kadar toplu SET istekleri 503 ile reddedilir.'
+    );
+}
+
+/* Sabit süreli parola karşılaştırması (timing-safe). */
+function masterPasswordMatches(supplied) {
+    const expected = resolveMasterPassword();
+    if (!expected || typeof supplied !== 'string' || !supplied.length) return false;
+    const a = Buffer.from(supplied, 'utf8');
+    const b = Buffer.from(expected, 'utf8');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+}
 
 /* --- ENV DEĞİŞKENİ ÇÖZÜMLEME (fallback zinciri) ----------------------------
    Upstash marka değişkenler VE Vercel KV / Marketplace entegrasyonlarının
@@ -155,12 +205,37 @@ module.exports = async (req, res) => {
        bilinçli olarak daraltılmalıdır. */
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Master-Password');
 
     if (req.method === 'OPTIONS') {
         res.statusCode = 204;
         res.end();
         return;
+    }
+
+    /* ------------- POST { action:'verify' }: PRIVATE MOD PAROLA DOĞRULAMA -------------
+       Private (yönetici) girişinde panel bu isteği gönderir. Redis'ten bağımsızdır:
+       yalnızca APP_MASTER_PASSWORD env değeriyle karşılaştırma yapılır (timing-safe).
+       200 → parola doğru; 403 → hatalı parola; 503 → sunucuda parola env'i yok. */
+    if (req.method === 'POST') {
+        let earlyBody = req.body;
+        if (typeof earlyBody === 'string') {
+            try { earlyBody = JSON.parse(earlyBody); } catch (err) { earlyBody = null; }
+        }
+        if (earlyBody && earlyBody.action === 'verify') {
+            if (!masterPasswordConfigured()) {
+                logMissingMasterPassword();
+                sendJson(res, 503, { ok: false, error: 'Sunucuda APP_MASTER_PASSWORD (veya YASER_MASTER_PASSWORD) tanımlı değil; Private mod kullanılamıyor.' });
+                return;
+            }
+            if (masterPasswordMatches(String(earlyBody.masterPassword || ''))) {
+                sendJson(res, 200, { ok: true, mode: 'private' });
+            } else {
+                console.warn('[/api/data] 403: Private mod parola doğrulaması başarısız (hatalı parola).');
+                sendJson(res, 403, { ok: false, error: 'Hatalı Master Parola. Erişim reddedildi.' });
+            }
+            return;
+        }
     }
 
     if (!redisConfigured()) {
@@ -186,6 +261,27 @@ module.exports = async (req, res) => {
 
             const incomingJob = body && body.job && typeof body.job === 'object' ? body.job : null;
             const incomingJobs = body && Array.isArray(body.jobs) ? body.jobs : null;
+
+            /* TOPLU YAZIM YETKİ KONTROLÜ (Private mod / yönetici tam senkronu):
+               { jobs:[...] } gövdeli istekler Master Parola taşımak zorundadır.
+               Guest form akışı ({ job:{...} }) bu kontrolün dışındadır. */
+            if (incomingJobs) {
+                if (!masterPasswordConfigured()) {
+                    logMissingMasterPassword();
+                    sendJson(res, 503, {
+                        ok: false,
+                        error: 'Toplu bulut yazımı kapalı: sunucuda APP_MASTER_PASSWORD ortam değişkeni tanımlı değil. Private mod yönetici yazımı devre dışı.'
+                    });
+                    return;
+                }
+                const supplied = (req.headers && req.headers['x-master-password'])
+                    || (body && typeof body.masterPassword === 'string' ? body.masterPassword : '');
+                if (!masterPasswordMatches(String(supplied || ''))) {
+                    console.warn('[/api/data] 403: Toplu yazım reddedildi — Master Parola eksik veya hatalı.');
+                    sendJson(res, 403, { ok: false, error: 'Yetkisiz istek: Master Parola doğrulaması başarısız. Toplu bulut yazımı yalnızca Private (yönetici) modda yapılabilir.' });
+                    return;
+                }
+            }
 
             if (!incomingJob && !incomingJobs) {
                 sendJson(res, 400, { ok: false, error: 'Geçersiz gövde: { job:{...} } ya da { jobs:[...] } bekleniyor.' });

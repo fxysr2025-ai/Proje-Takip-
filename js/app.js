@@ -1528,7 +1528,7 @@ document.addEventListener('DOMContentLoaded', () => {
        istenir. Kilit açılana kadar loadAllData()/renderCurrentView() çalışmaz,
        dolayısıyla çözülmemiş hiçbir veri ekrana da gelmez. Web Crypto destek
        lenmiyorsa zkBoot() hemen çözülür ve akış eskisi gibi devam eder. */
-    zkBoot().then(() => { bootAfterUnlock(); });
+    zkBootWorkModeGate().then(() => { bootAfterUnlock(); });
 });
 
 function bootAfterUnlock() {
@@ -1583,7 +1583,11 @@ function bootAfterUnlock() {
        yaser_v10_jobs dizisine ID bazlı birleştirilir. Sessiz çalışır; API
        yapılandırılmamışsa yalnızca konsol uyarısı verir, uygulama akışı
        hiç etkilenmez. */
-    if (typeof hookSaveAllDataForCloudSync === 'function') hookSaveAllDataForCloudSync();
+    initWorkMode();
+    if (typeof isWorkModePrivate === 'function' && isWorkModePrivate()) {
+        if (typeof hookSaveAllDataForCloudSync === 'function') hookSaveAllDataForCloudSync();
+        if (typeof initCloudSyncWatcher === 'function') initCloudSyncWatcher();
+    }
     if (typeof initCloudSyncWatcher === 'function') initCloudSyncWatcher();
     populateCityDropdown();
     
@@ -2153,6 +2157,15 @@ function _zkRead(key) {
 function _zkWrite(key, value) {
     const text = String(value);
     zkPlainCache.set(key, text);
+    /* ÇALIŞMA MODU: kasa yok (public veya purge edilmiş private oturum)
+       → şifresiz yerel depoya yaz; aksi hâlde RAM dışında hiç kalıcı iz
+       oluşmaz ve sayfa yenilenince veriler kaybolurdu. wmPlainWrite, şifreli
+       kasa varken yazımı engeller (kasa korunur). */
+    if (!zkRootBits) {
+        if (typeof wmPlainWrite === 'function') wmPlainWrite(key, text);
+        else { try { localStorage.setItem(key, text); } catch (e) { /* yoksay */ } }
+        return Promise.resolve();
+    }
     const prev = _zkWriteChains.get(key) || Promise.resolve();
     const next = prev.then(async () => {
         if (!zkRootBits) return;   /* kilitliyken düz metin ASLA yazılmaz */
@@ -2478,7 +2491,107 @@ function lockApp() {
 /* Uygulama açılışı: Web Crypto yoksa şifreleme YOK sayılır ve uygulama
    eskisi gibi açılır (konsola uyarı düşer) — kullanıcı kilitlenmez.
    Kasa varsa ÖNCE bu cihazdaki otomatik açma kimliği denenir; yalnızca
-   kimlik yoksa veya geçersizse parola ekranı gösterilir. */
+
+/* ==========================================================================
+   ÇALIŞMA MODU DEPOSU — PUBLIC İÇİN ŞİFRESİZ YEREL KATMAN
+   --------------------------------------------------------------------------
+   Public (yerel) mod parola sormadan çalıştığı için ZK kilit ekranı bu modda
+   gösterilmez. Yerel depo iki biçimde olabilir:
+
+   · ŞİFRELİ (eski ZK kasası): kayıtlar zk1v1. ön eki taşır ve parolasız
+     okunamaz. Bu kayıtların üzerine şifresiz yazı yazmak veriyi yok edeceği
+     için wmPlainWrite KASAYI KORUR: kasa kayıtlıyken hiç yazmaz.
+   · ŞİFRESİZ (public yerel depo): anahtarlar düz JSON/metin. Public mod
+     burada çalışır; kasa bir kez göç edildikten sonra Private mod da aynı
+     havuzu kullanır (bulut = Upstash, yerel = bu depo).
+
+   Açılışta zkBootWorkModeGate() karar verir: kasa yoksa parolasız açılır;
+   kasa varsa otomatik açma mümkünse veriler BİR KEZ şifresiz depoya göç
+   ettirilir (kasa düşürülür), mümkün değilse eski parola ekranı gösterilir.
+   ========================================================================== */
+
+const ZK_PREFIX_LOCAL = 'zk1v1.';   /* ZK kayıt ön eki (yerel kopya) */
+
+/* Bu cihazda şifreli kasa kurulu mu? */
+function wmHasEncryptedVault() {
+    try { return !!localStorage.getItem(ZK_META_KEY); } catch (e) { return false; }
+}
+
+/* Şifresiz depoda en az bir veri anahtarı var mı? */
+function wmHasPlainData() {
+    try {
+        for (const key of ZK_DATA_KEYS) {
+            if (localStorage.getItem(key) !== null) return true;
+        }
+    } catch (e) { /* yoksay */ }
+    return false;
+}
+
+/* Public mod yerel yazması. Şifreli kasa varken ASLA yazmaz (kasa korunur). */
+function wmPlainWrite(key, text) {
+    if (wmHasEncryptedVault()) return;
+    try { localStorage.setItem(key, String(text)); } catch (e) { /* yoksay */ }
+}
+
+/* Public mod yerel okuması: yalnızca şifresiz kayıtlar. */
+function wmPlainRead(key) {
+    try {
+        const raw = localStorage.getItem(key);
+        if (raw === null || String(raw).indexOf(ZK_PREFIX_LOCAL) === 0) return null;
+        return raw;
+    } catch (e) { return null; }
+}
+
+/* Şifresiz depoyu RAM önbelleğine doldurur (public mod veri kaynağı). */
+function wmFillPublicCache() {
+    const cache = new Map();
+    for (const key of ZK_DATA_KEYS) {
+        cache.set(key, wmPlainRead(key));
+    }
+    return cache;
+}
+
+/* Oturum göçü: otomatik açılmış (zkPlainCache dolu) bir kasadaki TÜM düz
+   metinler şifresiz depoya yazılır, ardından kasa kayıtları düşürülür.
+   Böylece sonraki açılışlar parolasız devam eder; veri kaybı olmaz. */
+function wmMigrateVaultToPublicFromSession() {
+    try {
+        zkPlainCache.forEach(function (value, key) {
+            try { localStorage.setItem(key, String(value)); } catch (e) { /* yoksay */ }
+        });
+        try { localStorage.removeItem(ZK_META_KEY); } catch (e) { /* yoksay */ }
+        try { localStorage.removeItem(ZK_CHECK_KEY); } catch (e) { /* yoksay */ }
+        try { localStorage.removeItem(ZK_AUTO_KEY); } catch (e) { /* yoksay */ }
+        zkRootBits = null;
+        return Promise.resolve(true);
+    } catch (e) {
+        return Promise.resolve(false);
+    }
+}
+
+/* zkBoot'un ÇALIŞMA MODU kapısı: public modda kilit ekranını atlar.
+   · Kasa yok → şifresiz depoyu cache'e doldur, parolasız aç.
+   · Kasa var + otomatik açma → bir kez şifresiz depoya göç et, parolasız aç.
+   · Kasa var, otomatik açma yok → eski parola ekranı (legacy yol). */
+function zkBootWorkModeGate() {
+    if (!wmHasEncryptedVault()) {
+        zkPlainCache = wmFillPublicCache();
+        return Promise.resolve();
+    }
+    return zkTryAutoUnlock().then(function (unlocked) {
+        if (unlocked) {
+            return wmMigrateVaultToPublicFromSession().then(function () {
+                zkPlainCache = wmFillPublicCache();
+            });
+        }
+        zkShowLock('unlock');
+        const el = zkEls();
+        if (!el.form) return;
+        return zkWaitUnlockForm();
+    });
+}
+
+
 function zkBoot() {
     const el = zkEls();
     if (!zkCryptoAvailable()) {
@@ -11742,6 +11855,376 @@ document.addEventListener('click', (e) => {
 });
 
 
+
+/* ==========================================================================
+   ÇALIŞMA MODU — PUBLIC (YEREL) / PRIVATE (BULUT / YÖNETİCİ)
+   --------------------------------------------------------------------------
+   İki mod vardır:
+
+   · PUBLIC (varsayılan): Uygulama parola sormadan açılır; tüm eklemeler/
+     güncellemeler/silmeler YALNIZCA yerel depoda (localStorage) tutulur.
+     /api/data'ya HİÇBİR yazma isteği gönderilmez; bulut okuması ve periyodik
+     senkron da hiç çalışmaz (bulut tamamen kapalı).
+
+   · PRIVATE: Master Parola ile girilir. Girişte parola sunucuda /api/data
+     üzerinden doğrulanır (POST { action:'verify' } → 200/403) ve oturum
+     boyunca yalnızca RAM'de tutulur; her toplu bulut yazımında
+     X-Master-Password başlığıyla iletilir. Private moddayken saveAllData
+     senkronu buluta yazar, buluttan gelen güncellemeler periyodik çekilir.
+
+   PUBLIC → PRIVATE geçişte yerel veriler diske yazılıp bulut köprüsü ancak
+   parola doğrulandıktan sonra açılır; böylece yerel değişiklikler asla
+   yanlışlıkla buluta sızmaz.
+   ========================================================================== */
+
+const WORK_MODE_STORAGE_KEY = 'yaser_v10_work_mode';   /* 'public' | 'private' */
+
+let workMode = 'public';            /* aktif çalışma modu (RAM) */
+let workModeMasterPassword = '';    /* yalnızca Private oturumu boyunca RAM'de */
+let workModeBridgeInstalled = false;
+
+function isWorkModePrivate() {
+    return workMode === 'private';
+}
+
+function isWorkModePublic() {
+    return workMode === 'public';
+}
+
+/* Public modda toplu bulut yazımını global emniyet kilidiyle de engeller:
+   pushCloudJobs, { jobs:[...] } toplu SET isteğinin tek kapısıdır. */
+function installWorkModeBridge() {
+    if (workModeBridgeInstalled) return;
+    const target = (typeof globalThis !== 'undefined') ? globalThis : window;
+    if (typeof target.pushCloudJobs !== 'function') return;
+    const original = target.pushCloudJobs;
+    target.pushCloudJobs = function () {
+        if (!isWorkModePrivate()) {
+            console.info('[mode] Public (yerel) modda bulut yazımı atlandı (pushCloudJobs engellendi).');
+            return Promise.reject(new Error('mode:public-no-cloud'));
+        }
+        return original.apply(this, arguments);
+    };
+    target.pushCloudJobs.__modeHooked = true;
+    workModeBridgeInstalled = true;
+}
+
+/* Kalıcı mod tercihi: uygulama bir sonraki açılışta bu modda başlar. */
+function readStoredWorkMode() {
+    try {
+        const v = localStorage.getItem(WORK_MODE_STORAGE_KEY);
+        return (v === 'private') ? 'private' : 'public';
+    } catch (e) {
+        return 'public';
+    }
+}
+
+function storeWorkMode(mode) {
+    try { localStorage.setItem(WORK_MODE_STORAGE_KEY, mode); } catch (e) { /* yoksay */ }
+}
+
+/* --- Topbar rozeti -------------------------------------------------------- */
+function updateWorkModeBadge() {
+    const badge = document.getElementById('work-mode-badge');
+    if (!badge) return;
+    const isPrivate = isWorkModePrivate();
+    badge.classList.toggle('wm-private', isPrivate);
+    badge.classList.toggle('wm-public', !isPrivate);
+    badge.title = isPrivate
+        ? 'Private Mod: Buluta bağlı (yönetici). Değişiklikler Upstash bulutuna yazılır.'
+        : 'Public Mod: Yerel çalışma. Bulut kapalı; değişiklikler yalnızca bu tarayıcıda saklanır.';
+    const textEl = badge.querySelector('.wm-badge-text');
+    const iconEl = badge.querySelector('.wm-badge-icon');
+    if (iconEl) iconEl.className = isPrivate ? 'fa-solid fa-lock wm-badge-icon' : 'fa-solid fa-lock-open wm-badge-icon';
+    if (textEl) textEl.textContent = isPrivate ? 'Bulut Bağlı (Private)' : 'Yerel Mod (Public — Bulut Kapalı)';
+}
+
+
+/* --- Private giriş modalı -------------------------------------------------- */
+function showWorkModeModal() {
+    const modal = document.getElementById('work-mode-modal');
+    if (!modal) return;
+    /* Mevcut mod işaretlenir; parola alanı yalnızca Private için açılır. */
+    modal.querySelectorAll('.wm-option').forEach(opt => {
+        opt.classList.toggle('selected', opt.dataset.mode === workMode);
+    });
+    const pwWrap = document.getElementById('wm-password-wrap');
+    if (pwWrap) pwWrap.style.display = isWorkModePrivate() ? 'flex' : 'none';
+    const pwInput = document.getElementById('wm-password-input');
+    const err = document.getElementById('wm-error');
+    if (err) { err.textContent = ''; err.style.display = 'none'; }
+    if (pwInput) pwInput.value = '';
+    modal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+    setTimeout(() => { if (pwInput && isWorkModePrivate()) pwInput.focus(); }, 80);
+}
+
+function closeWorkModeModal() {
+    const modal = document.getElementById('work-mode-modal');
+    if (modal) modal.classList.remove('active');
+    const pwInput = document.getElementById('wm-password-input');
+    if (pwInput) pwInput.value = '';
+    document.body.style.overflow = '';
+}
+
+/* Rozet tıklanınca mod seçim modalı açılır/kapatılır. */
+function toggleWorkModeModal() {
+    const modal = document.getElementById('work-mode-modal');
+    if (modal && modal.classList.contains('active')) closeWorkModeModal();
+    else showWorkModeModal();
+}
+
+/* Modal içindeki mod kartına tıklanınca: seçim işaretlenir, parola alanı
+   yalnızca Private için görünür olur. */
+function selectWorkModeOption(mode, ev) {
+    const card = (ev && ev.currentTarget) ? ev.currentTarget : null;
+    const opt = card && card.closest ? card.closest('.wm-option') : null;
+    document.querySelectorAll('#work-mode-modal .wm-option').forEach(o => o.classList.remove('selected'));
+    if (opt) opt.classList.add('selected');
+    else {
+        document.querySelectorAll('#work-mode-modal .wm-option').forEach(o => {
+            o.classList.toggle('selected', o.dataset.mode === mode);
+        });
+    }
+    const pwWrap = document.getElementById('wm-password-wrap');
+    if (pwWrap) pwWrap.style.display = (mode === 'private') ? 'flex' : 'none';
+    const err = document.getElementById('wm-error');
+    if (err) { err.textContent = ''; err.style.display = 'none'; }
+    const pwInput = document.getElementById('wm-password-input');
+    if (mode === 'private' && pwInput) setTimeout(() => pwInput.focus(), 60);
+}
+
+function showWorkModeError(msg) {
+    const err = document.getElementById('wm-error');
+    if (!err) return;
+    err.textContent = msg;
+    err.style.display = 'block';
+}
+
+
+/* Private girişte parolanın bulut tarafından doğrulanması. */
+function verifyMasterPasswordWithCloud(password) {
+    return fetch(CLOUD_API_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'verify', masterPassword: password })
+    }).then(r => {
+        if (r.status === 403) {
+            const err = new Error('wrong-password');
+            err.httpStatus = 403;
+            throw err;
+        }
+        if (!r.ok) {
+            const err = new Error('HTTP ' + r.status);
+            err.httpStatus = r.status;
+            throw err;
+        }
+        return r.json();
+    }).then(payload => {
+        if (!payload || payload.ok !== true) throw new Error('verify-failed');
+        return true;
+    });
+}
+
+/* Modalın "Devam Et" düğmesi: seçilen moda göre giriş yapar. */
+function applySelectedWorkMode() {
+    const modal = document.getElementById('work-mode-modal');
+    const selectedOpt = modal ? modal.querySelector('.wm-option.selected') : null;
+    const mode = (selectedOpt && selectedOpt.dataset.mode) || workMode;
+
+    if (mode === 'public') {
+        enterPublicWorkMode(true);
+        closeWorkModeModal();
+        return;
+    }
+
+    const pwInput = document.getElementById('wm-password-input');
+    const password = (pwInput && pwInput.value) || '';
+    if (!password) {
+        showWorkModeError('Lütfen Master Parola girin.');
+        if (pwInput) pwInput.focus();
+        return;
+    }
+
+    const btn = document.getElementById('wm-continue-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Doğrulanıyor…'; }
+
+    verifyMasterPasswordWithCloud(password)
+        .then(() => {
+            workModeMasterPassword = password;   /* yalnızca RAM'de tutulur */
+            return enterPrivateWorkMode();
+        })
+        .then(() => { closeWorkModeModal(); })
+        .catch(err => {
+            if (err && err.httpStatus === 403) showWorkModeError('Hatalı Master Parola. Erişim reddedildi (403).');
+            else showWorkModeError('Doğrulama başarısız: ' + ((err && err.message) || 'bağlantı hatası'));
+            if (typeof console !== 'undefined' && console.warn) console.warn('[mode] Private giriş doğrulaması başarısız:', err);
+        })
+        .finally(() => {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i> Devam Et'; }
+        });
+}
+
+/* Enter tuşu parola alanında Devam Et'i tetikler. */
+function handleWorkModePasswordKeydown(ev) {
+    if (ev && ev.key === 'Enter') {
+        ev.preventDefault();
+        applySelectedWorkMode();
+    }
+}
+
+
+/* --- Mod geçişleri ---------------------------------------------------------- */
+
+/* ==========================================================================
+   PRIVATE OTURUM GİZLİLİĞİ — YEREL DEPO TEMİZLİĞİ
+   --------------------------------------------------------------------------
+   Private (bulut/yönetici) oturumu boyunca yaser_v10_* verileri yerel depoya
+   da yazılır (saveAllData). Private'dan çıkışta (Public'e geçiş, sekme/
+   pencere kapanışı) bu yerel izler TAMAMEN silinir; böylece ardından Public
+   modda açılan biri önceki Private oturumuna ait hiçbir iş kaydı görmez ve
+   Public tamamen sıfır/izole bir depoyla başlar. Verilerin asıl kopyası
+   Upstash bulutundadır; sonraki Private girişte buluttan geri yüklenir.
+   ========================================================================== */
+
+/* Private oturumun yerel depoya bıraktığı TÜM veri anahtarlarını siler.
+   Şifreli kasa hâlâ kuruluysa hiçbir şeye dokunmaz (kasa korunur).
+   Sunum/oturum anahtarları (tema, geri sayım...) bilinçli olarak korunur. */
+function wmPurgePrivateLocalData() {
+    if (wmHasEncryptedVault()) return 0;   /* şifreli kasaya asla dokunma */
+    let removed = 0;
+    try {
+        ZK_DATA_KEYS.forEach(function (key) {
+            try { localStorage.removeItem(key); removed++; } catch (e) { /* yoksay */ }
+        });
+        try { localStorage.removeItem(CLOUD_SYNC_STORAGE_FLAG); } catch (e) { /* yoksay */ }
+    } catch (e) { /* yoksay */ }
+    if (typeof console !== 'undefined' && console.info) {
+        console.info('[mode] Private oturum yerel verisi temizlendi (' + removed + ' anahtar).');
+    }
+    return removed;
+}
+
+/* RAM'deki tüm oturum verisini sıfırlar: Private oturumunun hafızadaki izi
+   kalmasın; geri alma yığını da boşaltılır. */
+function wmResetSessionState() {
+    jobs = [];
+    activeJobIds = [];
+    notes = [];
+    noteTopics = [];
+    noteBoardsAllCleared = false;
+    tasks = [];
+    files = [];
+    quickNotes = [];
+    stickyNotes = [];
+    weeklyGoal = { Pazartesi: 0, Salı: 0, Çarşamba: 0, Perşembe: 0, Cuma: 0 };
+    undoStack = [];
+    /* KRITIK: RAM veri onbellekleri de bosaltilmalidir; aksi halde hemen
+       arkasindan calisan loadAllData() private verisini onbellekten geri
+       yukler ve gorev normalizasyonu diske geri yazar (sizma). */
+    zkPlainCache = new Map();
+    if (typeof zkCipherCache !== 'undefined' && zkCipherCache && zkCipherCache.clear) zkCipherCache.clear();
+    if (typeof _lastWritten !== 'undefined' && _lastWritten && _lastWritten.clear) _lastWritten.clear();
+    if (typeof updateUndoIndicator === 'function') updateUndoIndicator();
+}
+
+/* PUBLIC moda geç: bulut timer'ını durdur, parolayı düşür, yerel veriyi
+   yeniden yükle (Private oturumundan geliyorsak). */
+function enterPublicWorkMode(refreshUi) {
+    const wasPrivate = isWorkModePrivate();
+    workMode = 'public';
+    workModeMasterPassword = '';
+    storeWorkMode('public');
+
+    /* Emniyet kilidi: pushCloudJobs Public modda yazım reddeder. */
+    installWorkModeBridge();
+
+    /* Private oturuma ait bulut timer'ı durdurulur. */
+    if (typeof cloudSyncTimerId !== 'undefined' && cloudSyncTimerId) {
+        clearInterval(cloudSyncTimerId);
+        cloudSyncTimerId = null;
+    }
+
+    if (wasPrivate) {
+        /* RAM'deki oturum verisi yerel depoya yazılır; yerel veriler
+           yeniden yüklenip arayüz tazelenir. */
+        /* Gizlilik: Private oturumunun yerel izleri ve RAM kopyasi silinir;
+           Public tamamen sifir/izole bir depoyla baslar. */
+        if (typeof wmPurgePrivateLocalData === 'function') wmPurgePrivateLocalData();
+        if (typeof wmResetSessionState === 'function') wmResetSessionState();
+        if (typeof loadAllData === 'function') loadAllData();
+        if (typeof refreshAllViews === 'function') refreshAllViews();
+        if (typeof renderCurrentView === 'function') renderCurrentView();
+        if (typeof showToast === 'function') showToast('Yerel Mod (Public) açıldı: bulut kapalı, değişiklikler yalnızca bu tarayıcıda saklanır.', 'info');
+    }
+
+    updateWorkModeBadge();
+}
+
+/* PRIVATE moda geç: bulut köprüsü açılır, bulut verisi çekilir ve periyodik
+   iki yönlü senkron başlar. Parola doğrulaması BİTTİKTEN SONRA çağrılmalıdır
+   (applySelectedWorkMode içinde). */
+function enterPrivateWorkMode() {
+    workMode = 'private';
+    storeWorkMode('private');
+
+    installWorkModeBridge();
+
+    /* saveAllData → bulut köprüsü (parola X-Master-Password ile taşınır). */
+    if (typeof hookSaveAllDataForCloudSync === 'function') hookSaveAllDataForCloudSync();
+
+    /* Bulut verisi YENIDEN cekilip RAM'e yuklenir (purge sonrasi bos depodan
+       degil, Upstash'ten). */
+    /* Bulut verisini çek + periyodik izleyiciyi başlat. */
+    if (typeof initCloudSyncWatcher === 'function') initCloudSyncWatcher();
+
+    if (typeof showToast === 'function') showToast('Bulut Bağlandı (Private): değişiklikler artık Upstash bulutuna yazılıyor.', 'success');
+
+    updateWorkModeBadge();
+    return Promise.resolve();
+}
+
+/* Sekme/pencere kapanışı: Private oturumu aktifse yerel depodaki tüm izler
+   silinir. Aynı tarayıcıda hemen ardından açılan Public oturum (veya
+   misafir formu) önceki Private iş kayıtlarını ASLA göremez. Veriler
+   Upstash bulutunda güvende olduğundan veri kaybı yaşanmaz.
+   Not: 'unload' kullanılır çünkü 'pagehide'/'visibilitychange' bazı senaryolarda
+   ( işlem sonrası kapatma) tetiklenmeden süre bitebilir; kaldırma/yenileme
+   akışlarında da purge idempotent olduğu için çift çalışması zararsızdır. */
+window.addEventListener('beforeunload', function () {
+    if (typeof isWorkModePrivate === 'function' && isWorkModePrivate()) {
+        try { if (typeof wmPurgePrivateLocalData === 'function') wmPurgePrivateLocalData(); } catch (e) { /* yoksay */ }
+    }
+});
+window.addEventListener('unload', function () {
+    if (typeof isWorkModePrivate === 'function' && isWorkModePrivate()) {
+        try { if (typeof wmPurgePrivateLocalData === 'function') wmPurgePrivateLocalData(); } catch (e) { /* yoksay */ }
+    }
+});
+
+/* Açılışta çalışır: mod köprüsünü kurar, rozeti günceller. Kayıtlı tercih
+   'private' olsa bile parola RAM'de olmadığından oturum public başlar;
+   kullanıcı rozetten Private'ı seçip parolasını girer. *//* Açılışta çalışır: mod köprüsünü kurar, rozeti günceller. Kayıtlı tercih
+   'private' olsa bile parola RAM'de olmadığından oturum public başlar;
+   kullanıcı rozetten Private'ı seçip parolasını girer. */
+function initWorkMode() {
+    const stored = readStoredWorkMode();
+    /* Beklenmeyen kapanma: kalan tercih 'private' ise cikista purge firsati
+       bulunamamis demektir; kalmis olabilecek son izler burada silinir. */
+    if (stored === 'private' && typeof wmPurgePrivateLocalData === 'function') {
+        wmPurgePrivateLocalData();
+        storeWorkMode('public');   /* tek seferlik temizlik; tekrar etmesin */
+    }
+    workMode = 'public';
+    workModeMasterPassword = '';
+    if (stored === 'private' && typeof console !== 'undefined' && console.info) {
+        console.info('[mode] Kayıtlı tercih Private; parola doğrulaması için rozet kullanılabilir.');
+    }
+    installWorkModeBridge();
+    updateWorkModeBadge();
+}
+
+
 /* ==========================================================================
    GUEST FORM MODE — KISITLI DIŞ FORM GÖRÜNÜMÜ
    --------------------------------------------------------------------------
@@ -11821,6 +12304,17 @@ function initGuestFormMode() {
     guestModeActivated = true;
 
     applyGuestModeClass();
+
+    /* Gizlilik savunma katmani: beklenmeyen bir kapanmada (çökme, güç
+       kesintisi) purge firseti bulunamamis olabilir; kalmis private izleri
+       guest form da gorebilir. Temizlik guest akisindan once yapilir. */
+    try {
+        const kalanMod = readStoredWorkMode();
+        if (kalanMod === 'private') {
+            if (typeof wmPurgePrivateLocalData === 'function') wmPurgePrivateLocalData();
+            storeWorkMode('public');
+        }
+    } catch (e) { /* yoksay */ }
 
     /* Splash ve kilit katmanı guest formu KAPATMASIN: hemen kaldır. */
     stripAppDomForGuestMode();
@@ -11921,16 +12415,7 @@ function loadGuestJobFromCloud(jobId) {
 
     fetch(`${CLOUD_API_ENDPOINT}?t=${encodeURIComponent(Date.now())}`, { cache: 'no-store' })
         .then(r => {
-            if (!r.ok) {
-                /* Hata gövdesi okunur: 503 (env eksik) ile diğer sunucu hataları
-                   ayırt edilir; kullanıcıya duruma göre mesaj gösterilir. */
-                return r.json().catch(() => ({})).then(errBody => {
-                    const err = new Error((errBody && errBody.error) ? errBody.error : 'HTTP ' + r.status);
-                    err.httpStatus = r.status;
-                    err.apiError = (errBody && errBody.error) || '';
-                    throw err;
-                });
-            }
+            if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
         })
         .then(payload => {
@@ -11945,16 +12430,8 @@ function loadGuestJobFromCloud(jobId) {
         })
         .catch(err => {
             hideGuestBlockingScreen();
-            const status = err && err.httpStatus;
-            const isConfig = status === 503 || /yapılandır/i.test(String((err && err.message) || ''));
-            if (isConfig) {
-                showGuestBlockingScreen('Bulut depo hazır değil', 'Sunucu tarafında bulut depo yapılandırması tamamlanmamış. Yöneticiniz ortam değişkenlerini tanımladığında bu form çalışacaktır. Lütfen yöneticinizle iletişime geçin.', 'error');
-            } else {
-                showGuestBlockingScreen('Bağlantı hatası', 'İş kaydı şu anda alınamadı (HTTP ' + (status || '?') + '). İnternet bağlantınızı kontrol edip sayfayı yenileyin.', 'error');
-            }
-            if (typeof console !== 'undefined' && console.error) {
-                console.error('[guest] bulut yükleme hatası:', (err && err.message) || err, (err && err.apiError) ? '| API: ' + err.apiError : '');
-            }
+            showGuestBlockingScreen('Bağlantı hatası', 'İş kaydı şu anda alınamadı. İnternet bağlantınızı kontrol edip sayfayı yenileyin.', 'error');
+            if (typeof console !== 'undefined' && console.warn) console.warn('[guest] bulut yükleme hatası:', err);
         });
 }
 
@@ -12073,15 +12550,7 @@ function saveGuestJobToCloud() {
         body: JSON.stringify({ job: data })
     })
         .then(r => {
-            if (!r.ok) {
-                /* API'nin JSON hata mesajı okunur (ör. 503 env eksik). */
-                return r.json().catch(() => ({})).then(errBody => {
-                    const err = new Error((errBody && errBody.error) ? errBody.error : 'HTTP ' + r.status);
-                    err.httpStatus = r.status;
-                    err.apiError = (errBody && errBody.error) || '';
-                    throw err;
-                });
-            }
+            if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
         })
         .then(() => {
@@ -12090,15 +12559,7 @@ function saveGuestJobToCloud() {
             lockGuestFormAfterSave();
         })
         .catch(err => {
-            const status = err && err.httpStatus;
-            const isConfig = status === 503 || /yapılandır/i.test(String((err && err.message) || ''));
-            const msg = isConfig
-                ? 'Kayıt gönderilemedi: sunucuda bulut depo yapılandırması eksik. Yöneticinizle iletişime geçin.'
-                : 'Kayıt gönderilemedi: ' + ((err && err.message) ? err.message : 'bağlantı hatası') + ' (HTTP ' + (status || '?') + ')';
-            if (typeof showToast === 'function') showToast(msg, 'error');
-            if (typeof console !== 'undefined' && console.error) {
-                console.error('[guest] kayıt gönderilemedi:', (err && err.message) || err, (err && err.apiError) ? '| API: ' + err.apiError : '');
-            }
+            if (typeof showToast === 'function') showToast('Kayıt gönderilemedi: ' + (err && err.message ? err.message : 'bağlantı hatası'), 'error');
             const retryNote = document.getElementById('guest-retry-note');
             if (retryNote) { retryNote.style.display = 'block'; }
         })
@@ -12186,14 +12647,7 @@ function guestStampMs(job) {
 function fetchCloudJobs() {
     return fetch(`${CLOUD_API_ENDPOINT}?t=${encodeURIComponent(Date.now())}`, { cache: 'no-store' })
         .then(r => {
-            if (!r.ok) {
-                /* API'nin JSON hata mesajı (ör. 503 env eksik) korunur. */
-                return r.json().catch(() => ({})).then(errBody => {
-                    const err = new Error((errBody && errBody.error) ? errBody.error : 'HTTP ' + r.status);
-                    err.httpStatus = r.status;
-                    throw err;
-                });
-            }
+            if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
         })
         .then(payload => {
@@ -12205,18 +12659,14 @@ function fetchCloudJobs() {
 }
 
 function pushCloudJobs(jobsArray) {
+    const wmHeaders = { 'Content-Type': 'application/json' };
+    if (typeof isWorkModePrivate === 'function' && isWorkModePrivate() && typeof workModeMasterPassword !== 'undefined' && workModeMasterPassword) { wmHeaders['X-Master-Password'] = workModeMasterPassword; }
     return fetch(CLOUD_API_ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: wmHeaders,
         body: JSON.stringify({ jobs: jobsArray })
     }).then(r => {
-        if (!r.ok) {
-            return r.json().catch(() => ({})).then(errBody => {
-                const err = new Error((errBody && errBody.error) ? errBody.error : 'HTTP ' + r.status);
-                err.httpStatus = r.status;
-                throw err;
-            });
-        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
     });
 }
@@ -12248,30 +12698,24 @@ function mergeCloudJobsIntoLocal(cloudJobs) {
     return { added, updated };
 }
 
-/* Yerel → bulut tam senkron (sessiz; panelde hiçbir gürültü çıkarmaz). */
+/* Yerel → bulut tam senkron (sessiz). */
 function syncJobsToCloud(reasonLabel) {
+    if (typeof isWorkModePrivate === 'function' && !isWorkModePrivate()) return Promise.resolve(false);
     if (!cloudSyncEnabled || typeof jobs === 'undefined' || !Array.isArray(jobs)) return Promise.resolve(false);
     return pushCloudJobs(jobs)
         .then(() => {
             try { localStorage.setItem(CLOUD_SYNC_STORAGE_FLAG, String(Date.now())); } catch (e) {}
-            /* Sessiz başarı logu: verilerin Upstash'e yazıldığı konsolda
-               doğrulanabilir; arayüzde bildirim gösterilmez. */
-            if (typeof console !== 'undefined' && console.info) {
-                console.info('[cloud] yaser_v10_jobs Upstash\'e yazıldı (' + jobs.length + ' kayıt, tetikleyen: ' + (reasonLabel || 'genel') + ')');
-            }
             return true;
         })
         .catch(err => {
-            const detail = (err && err.httpStatus)
-                ? 'HTTP ' + err.httpStatus + ((err && err.message) ? ' — ' + err.message : '')
-                : String((err && err.message) || err);
-            if (typeof console !== 'undefined' && console.warn) console.warn('[cloud] Upstash yazımı başarısız (' + (reasonLabel || 'genel') + '): ' + detail);
+            if (typeof console !== 'undefined' && console.warn) console.warn('[cloud] gönderim başarısız (' + (reasonLabel || 'genel') + '):', err);
             return false;
         });
 }
 
 /* Bulut → yerel kontrol; panel açılışında ve periyodik çağrılır. */
 function syncJobsFromCloud(showToastOnMerge) {
+    if (typeof isWorkModePrivate === 'function' && !isWorkModePrivate()) return Promise.resolve();
     if (!cloudSyncEnabled || cloudSyncInFlight) return Promise.resolve();
     cloudSyncInFlight = true;
     return fetchCloudJobs()
@@ -12283,16 +12727,10 @@ function syncJobsFromCloud(showToastOnMerge) {
                 if (showToastOnMerge && typeof showToast === 'function') {
                     showToast(`Bulut güncellemesi alındı: ${res.added} yeni, ${res.updated} güncellenen kayıt`, 'success');
                 }
-            } else if (typeof console !== 'undefined' && console.info) {
-                /* Sessiz log: bulut kontrolü sorunsuz tamamlandı. */
-                console.info('[cloud] bulut kontrolü tamam (' + cloudJobs.length + ' kayıt, değişiklik yok)');
             }
         })
         .catch(err => {
-            const detail = (err && err.httpStatus)
-                ? 'HTTP ' + err.httpStatus + ((err && err.message) ? ' — ' + err.message : '')
-                : String((err && err.message) || err);
-            if (typeof console !== 'undefined' && console.warn) console.warn('[cloud] kontrol başarısız:', detail);
+            if (typeof console !== 'undefined' && console.warn) console.warn('[cloud] kontrol başarısız:', err);
         })
         .finally(() => { cloudSyncInFlight = false; });
 }

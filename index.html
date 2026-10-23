@@ -391,6 +391,15 @@
                     <span id="clock-text">--:--:--</span>
                 </div>
                 <div class="topbar-actions" id="topbar-actions-container">
+                    <!-- ÇALIŞMA MODU ROZETİ: Public (yerel) / Private (bulut) durumunu
+                         gösterir. Tıklanınca mod seçim modalı açılır. Renkler ve metin
+                         updateWorkModeBadge() ile yönetilir (wm-private / wm-public). -->
+                    <button type="button" class="work-mode-badge wm-public" id="work-mode-badge"
+                            onclick="toggleWorkModeModal()" aria-live="polite"
+                            title="Public Mod: Yerel çalışma. Bulut kapalı; değişiklikler yalnızca bu tarayıcıda saklanır.">
+                        <i class="fa-solid fa-lock-open wm-badge-icon"></i>
+                        <span class="wm-badge-text">Yerel Mod (Public — Bulut Kapalı)</span>
+                    </button>
                     <!-- UYGULAMA KİLİDİ: AES-GCM şifreli oturumu RAM'den düşürüp
                          kilit ekranına döner. Erişilen hiçbir ID değiştirilmedi. -->
                     <button class="topbar-btn" id="zk-lock-btn" onclick="lockApp()" title="Uygulamayı Kilitle" aria-label="Uygulamayı Kilitle">
@@ -1770,6 +1779,137 @@
 </div>
 
 <script src="js/app.js"></script>
+<!-- ==========================================================================
+     ÇALIŞMA MODU (PUBLIC / PRIVATE) — ROZET STİLLERİ + MOD SEÇİM MODALI
+     --------------------------------------------------------------------------
+     · Rozet (#work-mode-badge): topbar'da aktif modu gösterir.
+       - wm-public  → gri / kilit-açık ikonu: "Yerel Mod (Public — Bulut Kapalı)"
+       - wm-private → yeşil / kilitli ikonu:  "Bulut Bağlı (Private)"
+     · Modal (#work-mode-modal): Public/Private seçimi; Private seçilirse
+       Master Parola alanı açılır. Parola doğrulaması sunucuda (/api/data)
+       yapılır; parola tarayıcıda saklanmaz.
+     ========================================================================== -->
+<style id="work-mode-styles">
+    /* --- TOPBAR ROZETİ --- */
+    .work-mode-badge {
+        display: inline-flex; align-items: center; gap: 7px;
+        height: 32px; padding: 0 12px;
+        border-radius: 999px; cursor: pointer;
+        font-family: var(--font-family-base); font-size: 11.6px; font-weight: 700;
+        letter-spacing: 0.2px; white-space: nowrap;
+        transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+    }
+    .work-mode-badge .wm-badge-icon { font-size: 11px; }
+    /* Gri / kilit açık: Public (yerel, bulut kapalı) */
+    .work-mode-badge.wm-public {
+        background: rgba(148, 163, 184, 0.14);
+        border: 1px solid rgba(148, 163, 184, 0.38);
+        color: var(--txt-sub);
+    }
+    .work-mode-badge.wm-public:hover { background: rgba(148, 163, 184, 0.24); }
+    /* Yeşil / kilitli: Private (buluta bağlı) */
+    .work-mode-badge.wm-private {
+        background: rgba(16, 185, 129, 0.14);
+        border: 1px solid rgba(16, 185, 129, 0.45);
+        color: var(--color-emerald, #10b981);
+        box-shadow: 0 0 12px rgba(16, 185, 129, 0.18);
+    }
+    .work-mode-badge.wm-private:hover { background: rgba(16, 185, 129, 0.22); }
+    [data-theme="light"] .work-mode-badge.wm-public { background: rgba(100, 116, 139, 0.10); border-color: rgba(100, 116, 139, 0.35); color: #475569; }
+    [data-theme="light"] .work-mode-badge.wm-private { background: rgba(5, 150, 105, 0.10); border-color: rgba(5, 150, 105, 0.40); color: #047857; }
+    @media (max-width: 900px) {
+        .work-mode-badge { padding: 0 9px; font-size: 10.4px; }
+        .work-mode-badge .wm-badge-text { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+    }
+</style>
+
+<!-- MOD SEÇİM MODALI: mevcut .modal-overlay/.modal-card cam dilini kullanır. -->
+<div class="modal-overlay" id="work-mode-modal" onclick="if (event.target === this) closeWorkModeModal()">
+    <div class="modal-card wm-modal-card">
+        <div class="modal-header wm-modal-header">
+            <div class="wm-modal-title-box">
+                <div class="wm-modal-eyebrow">ÇALIŞMA MODU</div>
+                <h3 class="wm-modal-title">Nasıl çalışmak istersiniz?</h3>
+                <p class="wm-modal-desc">
+                    <b>Public (Yerel):</b> Şifresiz açılır; tüm değişiklikler yalnızca bu tarayıcıda saklanır, buluta hiçbir şey yazılmaz.<br>
+                    <b>Private (Bulut / Yönetici):</b> Master Parola ile açılır; değişiklikler Upstash bulutuna yazılır.
+                </p>
+            </div>
+            <button class="wm-modal-close" onclick="closeWorkModeModal()" title="Kapat" aria-label="Kapat"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body wm-modal-body">
+            <div class="wm-option wm-option-public selected" data-mode="public" onclick="selectWorkModeOption('public', event)">
+                <div class="wm-option-icon wm-icon-public"><i class="fa-solid fa-lock-open"></i></div>
+                <div class="wm-option-text">
+                    <div class="wm-option-title">Public <span class="wm-option-tag">Yerel Çalışma</span></div>
+                    <div class="wm-option-desc">Parola gerekmez. Eklemeler, güncellemeler ve silmeler yalnızca bu tarayıcıda tutulur; bulut senkronizasyonu kapalıdır.</div>
+                </div>
+                <i class="fa-solid fa-circle-check wm-option-check"></i>
+            </div>
+            <div class="wm-option wm-option-private" data-mode="private" onclick="selectWorkModeOption('private', event)">
+                <div class="wm-option-icon wm-icon-private"><i class="fa-solid fa-lock"></i></div>
+                <div class="wm-option-text">
+                    <div class="wm-option-title">Private <span class="wm-option-tag wm-tag-private">Bulut / Yönetici Girişi</span></div>
+                    <div class="wm-option-desc">Master Parola sorulur. Doğru parolada bulut (Upstash) verisi yüklenir ve tüm değişiklikler buluta yazılır.</div>
+                </div>
+                <i class="fa-solid fa-circle-check wm-option-check"></i>
+            </div>
+            <div class="wm-password-wrap" id="wm-password-wrap" style="display:none;">
+                <label class="wm-pw-label" for="wm-password-input">MASTER PAROLA</label>
+                <input type="password" id="wm-password-input" class="wm-pw-input" autocomplete="current-password"
+                       placeholder="Master Parola" onkeydown="handleWorkModePasswordKeydown(event)">
+                <p class="wm-pw-hint">Parola yalnızca doğrulama anında sunucuya iletilir; tarayıcıda saklanmaz.</p>
+            </div>
+            <p class="wm-error" id="wm-error" role="alert" style="display:none;"></p>
+        </div>
+        <div class="modal-footer wm-modal-footer">
+            <button class="btn btn-secondary" onclick="closeWorkModeModal()">Vazgeç</button>
+            <button class="btn btn-primary" id="wm-continue-btn" onclick="applySelectedWorkMode()">
+                <i class="fa-solid fa-arrow-right-to-bracket"></i> Devam Et
+            </button>
+        </div>
+    </div>
+</div>
+<style id="work-mode-modal-styles">
+    #work-mode-modal { z-index: 100500; }
+    #work-mode-modal .wm-modal-card { max-width: 560px; width: 100%; }
+    .wm-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .wm-modal-eyebrow { font-size: 10px; font-weight: 800; letter-spacing: 1.2px; color: var(--txt-muted); margin-bottom: 4px; }
+    .wm-modal-title { font-family: var(--font-family-heading); font-size: 17px; font-weight: 800; color: var(--txt-main); margin: 0 0 6px; }
+    .wm-modal-desc { font-size: 11.8px; line-height: 1.6; color: var(--txt-muted); margin: 0; }
+    .wm-modal-close { background: transparent; border: none; color: var(--txt-muted); font-size: 16px; cursor: pointer; padding: 6px; border-radius: var(--radius-sm); }
+    .wm-modal-close:hover { background: var(--surface-glass); color: var(--txt-main); }
+    .wm-modal-body { display: flex; flex-direction: column; gap: 10px; }
+    .wm-option {
+        display: flex; align-items: center; gap: 12px;
+        padding: 13px 14px; border-radius: var(--radius-md, 12px);
+        border: 1px solid var(--surface-border);
+        background: var(--surface-glass); cursor: pointer;
+        transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
+    }
+    .wm-option:hover { border-color: var(--color-primary); }
+    .wm-option.selected { border-color: var(--color-primary); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18); }
+    .wm-option-icon { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
+    .wm-icon-public  { background: rgba(148, 163, 184, 0.16); color: #94a3b8; }
+    .wm-icon-private { background: rgba(16, 185, 129, 0.16); color: var(--color-emerald, #10b981); }
+    .wm-option-text { flex: 1; min-width: 0; }
+    .wm-option-title { font-size: 13px; font-weight: 800; color: var(--txt-main); display: flex; align-items: center; gap: 8px; }
+    .wm-option-tag { font-size: 9.6px; font-weight: 700; letter-spacing: 0.4px; padding: 2px 7px; border-radius: 999px; background: rgba(148, 163, 184, 0.16); color: var(--txt-sub); text-transform: uppercase; }
+    .wm-tag-private { background: rgba(16, 185, 129, 0.16); color: var(--color-emerald, #10b981); }
+    .wm-option-desc { font-size: 11.2px; line-height: 1.55; color: var(--txt-muted); margin-top: 3px; }
+    .wm-option-check { color: var(--color-primary); font-size: 15px; opacity: 0; transition: opacity var(--transition-fast); }
+    .wm-option.selected .wm-option-check { opacity: 1; }
+    .wm-password-wrap { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: var(--radius-md, 12px); border: 1px dashed var(--surface-border); background: var(--surface-glass); }
+    .wm-pw-label { font-size: 10.2px; font-weight: 800; letter-spacing: 0.8px; color: var(--txt-sub); }
+    .wm-pw-input { width: 100%; height: 36px; padding: 0 12px; background: var(--input-bg); color: var(--txt-main); border: 1px solid var(--surface-border); border-radius: var(--radius-sm); font-family: var(--font-family-base); font-size: var(--font-size-base); outline: none; }
+    .wm-pw-input:focus { border-color: var(--color-primary); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.22); }
+    .wm-pw-hint { font-size: 10.4px; color: var(--txt-muted); margin: 0; }
+    .wm-error { font-size: 11.4px; font-weight: 700; color: var(--color-danger, #ef4444); margin: 0; }
+    .wm-modal-footer { display: flex; justify-content: flex-end; gap: 10px; }
+    @media (prefers-reduced-motion: reduce) {
+        #work-mode-modal .modal-card, .wm-option, .work-mode-badge { transition: none; animation: none; }
+    }
+</style>
 <!-- ==========================================================================
      GUEST FORM MODE STİLLERİ
      --------------------------------------------------------------------------
