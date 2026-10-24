@@ -12255,15 +12255,29 @@ function enterPrivateWorkMode() {
        zaten boştur; TOTP/parola karışmasını da önler). */
     stopWorkModeTotpExpiryWatch();
 
+    /* GÜVENLİ BAŞLANGIÇ: Public'te kalan yerel/geçici/demo veriler RAM'den
+       düşürülür; liste bulut SAFE paketiyle sıfırdan kurulur. Böylece demo
+       kaydı bulut listesine ASLA karışmaz ve buluta yazılmaz. İlk paket
+       sonrasındaki saveAllData yerel depoyu da bulut verisiyle hizalar. */
+    jobs = [];
+    activeJobIds = [];
+    tasks = [];
+    notes = [];
+    noteTopics = [];
+    noteBoardsAllCleared = false;
+    files = [];
+    quickNotes = [];
+    stickyNotes = [];
+    undoStack = [];
+    if (typeof updateUndoIndicator === 'function') updateUndoIndicator();
+
     installWorkModeBridge();
 
-    /* saveAllData → bulut köprüsü (parola X-Master-Password ile taşınır). */
+    /* saveAllData → bulut köprüsü (X-Session-Token ile taşınır). */
     if (typeof hookSaveAllDataForCloudSync === 'function') hookSaveAllDataForCloudSync();
 
-    /* Bulut verisi YENIDEN cekilip RAM'e yuklenir (purge sonrasi bos depodan
-       degil, Upstash'ten). */
-    /* Bulut verisini çek + periyodik izleyiciyi başlat. */
-    if (typeof initCloudSyncWatcher === 'function') initCloudSyncWatcher();
+    /* Bulut SAFE paketini çek (secureBoot=true → REPLACE) + periyodik izleyici. */
+    if (typeof initCloudSyncWatcher === 'function') initCloudSyncWatcher(true);
 
     if (typeof showToast === 'function') showToast('Bulut Bağlandı (Private): değişiklikler artık Upstash bulutuna yazılıyor.', 'success');
 
@@ -12728,10 +12742,56 @@ let cloudSyncTimerId = null;
 let cloudSyncInFlight = false;
 let cloudSyncEnabled = true;
 
+/* DEMO KAYDI TESPİTİ: Public modda üretilen tanıtım kaydı buluta asla
+   taşınmamalıdır. Kayıt "DEMO KAYDI" başlığıyla (is_tanimi) işaretlidir;
+   eski hatalı senkronlarda buluta yazılan kopyalar da bu filtreyle ayıklanır. */
+function isDemoJob(job) {
+    return Boolean(job) && typeof job.is_tanimi === 'string'
+        && job.is_tanimi.toUpperCase().indexOf('DEMO KAYDI') !== -1;
+}
+
 function guestStampMs(job) {
     if (!job || !job.guest_updated_at) return 0;
     const t = Date.parse(job.guest_updated_at);
     return Number.isFinite(t) ? t : 0;
+}
+
+/* Bulut yanıtını modüllere ayrıştırır: eski sunucu yalnızca jobs döndürse bile
+   diğer alanlar güvenli boş değerlerle dolar. */
+function parseCloudPayload(payload) {
+    return {
+        jobs: (payload && Array.isArray(payload.jobs)) ? payload.jobs : [],
+        tasks: (payload && Array.isArray(payload.tasks)) ? payload.tasks : null,
+        notes: (payload && Array.isArray(payload.notes)) ? payload.notes : null,
+        noteTopics: (payload && Array.isArray(payload.noteTopics)) ? payload.noteTopics : null,
+        noteBoardsAllCleared: (payload && typeof payload.noteBoardsAllCleared === 'boolean') ? payload.noteBoardsAllCleared : null,
+        files: (payload && Array.isArray(payload.files)) ? payload.files : null,
+        quickNotes: (payload && Array.isArray(payload.quickNotes)) ? payload.quickNotes : null,
+        stickyNotes: (payload && Array.isArray(payload.stickyNotes)) ? payload.stickyNotes : null,
+        weeklyGoal: (payload && payload.weeklyGoal && typeof payload.weeklyGoal === 'object') ? payload.weeklyGoal : null,
+        settings: (payload && payload.settings && typeof payload.settings === 'object') ? payload.settings : null,
+        headerTitles: (payload && payload.headerTitles && typeof payload.headerTitles === 'object') ? payload.headerTitles : null,
+        customListColumns: (payload && Array.isArray(payload.customListColumns)) ? payload.customListColumns : null
+    };
+}
+
+/* Tam paket gövdesi: yedek dosyasındaki tüm anahtarlar buluta gider. */
+function buildCloudPayload() {
+    return {
+        bundle: true,
+        jobs: Array.isArray(jobs) ? jobs : [],
+        tasks: Array.isArray(tasks) ? tasks : [],
+        notes: Array.isArray(notes) ? notes : [],
+        noteTopics: Array.isArray(noteTopics) ? noteTopics : [],
+        noteBoardsAllCleared: Boolean(noteBoardsAllCleared),
+        files: Array.isArray(files) ? files : [],
+        quickNotes: Array.isArray(quickNotes) ? quickNotes : [],
+        stickyNotes: Array.isArray(stickyNotes) ? stickyNotes : [],
+        weeklyGoal: (weeklyGoal && typeof weeklyGoal === 'object') ? weeklyGoal : {},
+        settings: (settings && typeof settings === 'object') ? settings : {},
+        headerTitles: (customHeaderTitles && typeof customHeaderTitles === 'object') ? customHeaderTitles : {},
+        customListColumns: Array.isArray(customListColumns) ? customListColumns : []
+    };
 }
 
 function fetchCloudJobs() {
@@ -12744,7 +12804,7 @@ function fetchCloudJobs() {
             if (!payload || !payload.ok || !Array.isArray(payload.jobs)) {
                 throw new Error((payload && payload.error) || 'Bulut yanıtı geçersiz.');
             }
-            return payload.jobs;
+            return parseCloudPayload(payload);
         });
 }
 
@@ -12763,41 +12823,76 @@ function pushCloudJobs(jobsArray) {
     return fetch(CLOUD_API_ENDPOINT, {
         method: 'POST',
         headers: wmHeaders,
-        body: JSON.stringify({ jobs: jobsArray })
+        body: JSON.stringify(Object.assign(buildCloudPayload(), { jobs: jobsArray }))
     }).then(r => {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
     });
 }
 
-/* Bulut → yerel birleştirme. return: { added, updated } */
-function mergeCloudJobsIntoLocal(cloudJobs) {
+/* Bulut → yerel birleştirme. return: { added, updated, removed }
+   mergeJobs=true: mevcut oturumda birleştirme (guest güncellemeleri vs.).
+   mergeJobs=false: Private giriş (güvenli başlangıç) → bulut SAFE veri
+   LİSTEYİ TAMAMEN TANIMLAR; yereldeki Public/demo/önceki oturum verisi
+   listeye ASLA karışmaz (demo kaydının buluta sızmasını kesin olarak
+   engeller). Her iki yolda da DEMO KAYDI filtresi uygulanır; eski hatalı
+   senkronlarda buluta yazılmış demo kopyaları buluttan AYIKLANIR. */
+function mergeCloudJobsIntoLocal(cloudJobs, mergeJobs) {
     let added = 0;
     let updated = 0;
-    if (!Array.isArray(cloudJobs) || typeof jobs === 'undefined' || !Array.isArray(jobs)) return { added, updated };
+    let removed = 0;
+    if (!Array.isArray(cloudJobs)) cloudJobs = [];
 
-    cloudJobs.forEach(cj => {
-        if (!cj || cj.id === undefined || cj.id === null) return;
-        const idx = jobs.findIndex(x => String(x.id) === String(cj.id));
-        if (idx === -1) {
-            jobs.push(cj);
-            added++;
-        } else {
-            const stamp = guestStampMs(cj);
-            /* Guest damgası yoksa bulut kaydı yerelin ÜZERİNE yazılmaz:
-               yöneticinin yerel düzenlemeleri korunur. */
-            if (stamp > 0 && stamp > guestStampMs(jobs[idx])) {
-                jobs[idx] = cj;
-                updated++;
+    /* 1) DEMO AYIKLAMA: buluttaki demo kopyaları her koşulda düşürülür. */
+    const cloudTemiz = cloudJobs.filter(j => !isDemoJob(j));
+    removed = cloudJobs.length - cloudTemiz.length;
+
+    /* 2) Liste kaynağı: güvenli girişte REPLACE, aksi hâlde MERGE. */
+    if (mergeJobs === false) {
+        const eski = Array.isArray(jobs) ? jobs.length : 0;
+        jobs = cloudTemiz.slice();
+        removed += eski;   /* önceki (demo/public/önceki oturum) içerik tamamen değişti */
+    } else if (typeof jobs !== 'undefined' && Array.isArray(jobs)) {
+        cloudTemiz.forEach(cj => {
+            if (!cj || cj.id === undefined || cj.id === null) return;
+            const idx = jobs.findIndex(x => String(x.id) === String(cj.id));
+            if (idx === -1) {
+                jobs.push(cj);
+                added++;
+            } else {
+                const stamp = guestStampMs(cj);
+                /* Guest damgası yoksa bulut kaydı yerelin ÜZERİNE yazılmaz:
+                   yöneticinin yerel düzenlemeleri korunur. */
+                if (stamp > 0 && stamp > guestStampMs(jobs[idx])) {
+                    jobs[idx] = cj;
+                    updated++;
+                }
             }
-        }
-    });
+        });
+    }
 
-    if (added || updated) saveAllData();
-    return { added, updated };
+    if (added || updated || removed) saveAllData();
+    return { added, updated, removed };
 }
 
-/* Yerel → bulut tam senkron (sessiz). */
+/* Tam paketi diğer modüllere uygular: null = bulutta bu modül yok (korunur). */
+function applyCloudBundleToModules(p) {
+    let degisen = 0;
+    if (p.tasks !== null) { tasks = p.tasks; degisen++; }
+    if (p.notes !== null) { notes = p.notes; degisen++; }
+    if (p.noteTopics !== null) { noteTopics = p.noteTopics; degisen++; }
+    if (p.noteBoardsAllCleared !== null) { noteBoardsAllCleared = p.noteBoardsAllCleared; degisen++; }
+    if (p.files !== null) { files = p.files; degisen++; }
+    if (p.quickNotes !== null) { quickNotes = p.quickNotes; degisen++; }
+    if (p.stickyNotes !== null) { stickyNotes = p.stickyNotes; degisen++; }
+    if (p.weeklyGoal !== null) { weeklyGoal = p.weeklyGoal; degisen++; }
+    if (p.settings !== null) { settings = p.settings; degisen++; }
+    if (p.headerTitles !== null) { customHeaderTitles = p.headerTitles; degisen++; }
+    if (p.customListColumns !== null) { customListColumns = p.customListColumns; degisen++; }
+    return degisen;
+}
+
+/* Yerel → bulut tam senkron (sessiz). TÜM modüller paketle gider. */
 function syncJobsToCloud(reasonLabel) {
     if (typeof isWorkModePrivate === 'function' && !isWorkModePrivate()) return Promise.resolve(false);
     if (!cloudSyncEnabled || typeof jobs === 'undefined' || !Array.isArray(jobs)) return Promise.resolve(false);
@@ -12812,19 +12907,21 @@ function syncJobsToCloud(reasonLabel) {
         });
 }
 
-/* Bulut → yerel kontrol; panel açılışında ve periyodik çağrılır. */
-function syncJobsFromCloud(showToastOnMerge) {
+/* Bulut → yerel kontrol; Private girişte (secureBoot=true) yerel veri
+   bulut SAFE paketle DEĞİŞTİRİLİR, sonraki çağrılarda birleştirilir. */
+function syncJobsFromCloud(showToastOnMerge, secureBoot) {
     if (typeof isWorkModePrivate === 'function' && !isWorkModePrivate()) return Promise.resolve();
     if (!cloudSyncEnabled || cloudSyncInFlight) return Promise.resolve();
     cloudSyncInFlight = true;
     return fetchCloudJobs()
-        .then(cloudJobs => {
-            const res = mergeCloudJobsIntoLocal(cloudJobs);
+        .then(p => {
+            const res = mergeCloudJobsIntoLocal(p.jobs, secureBoot === true ? false : true);
+            applyCloudBundleToModules(p);
             try { localStorage.setItem(CLOUD_SYNC_STORAGE_FLAG, String(Date.now())); } catch (e) {}
-            if ((res.added || res.updated)) {
+            if ((res.added || res.updated || res.removed)) {
                 if (typeof renderCurrentView === 'function') renderCurrentView();
                 if (showToastOnMerge && typeof showToast === 'function') {
-                    showToast(`Bulut güncellemesi alındı: ${res.added} yeni, ${res.updated} güncellenen kayıt`, 'success');
+                    showToast(`Bulut güncellemesi alındı: ${res.added} yeni, ${res.updated} güncellenen${res.removed ? ', ' + res.removed + ' ayıklanan' : ''} kayıt`, 'success');
                 }
             }
         })
@@ -12834,11 +12931,12 @@ function syncJobsFromCloud(showToastOnMerge) {
         .finally(() => { cloudSyncInFlight = false; });
 }
 
-/* Panel açılışında bir kez + periyodik zamanlayıcıyı kurar. */
-function initCloudSyncWatcher() {
+/* Panel açılışında bir kez + periyodik zamanlayıcıyı kurar.
+   secureBoot=true: ilk çekim REPLACE modunda yapılır (güvenli Private girişi). */
+function initCloudSyncWatcher(secureBoot) {
     if (!cloudSyncEnabled) return;
 
-    syncJobsFromCloud(true);
+    syncJobsFromCloud(true, secureBoot === true);
 
     if (cloudSyncTimerId) clearInterval(cloudSyncTimerId);
     cloudSyncTimerId = setInterval(() => {

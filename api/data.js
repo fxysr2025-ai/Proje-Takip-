@@ -147,6 +147,34 @@ function sessionTokenValid(token) {
 
 const JOBS_KEY = 'yaser_v10_jobs';
 
+/* --- TAM YEDEK PAKETİ (tam paket senkronizasyonu) ---------------------------
+   Yalnızca jobs değil; tasks, notes, files, settings vb. TÜM modüller
+   Upstash'te saklanır. Kanonik depo: "yaser_full_backup" (tek JSON paketi).
+   JOBS_KEY, guest upsert akışı ve geriye dönük uyum için ayrı tutulur
+   (jobs aynası); her yazımda paket ile ayna senkron tutulur. */
+const FULL_BACKUP_KEY = 'yaser_full_backup';
+
+function parseStoredBundle(raw) {
+    if (!raw) return {};
+    try {
+        const parsed = JSON.parse(raw);
+        return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch (err) { return {}; }
+}
+
+function serializeBundle(bundle) {
+    try {
+        const json = JSON.stringify(bundle);
+        const bytes = Buffer.byteLength(json, 'utf8');
+        if (bytes > 80 * 1024 * 1024) {
+            throw new Error('yük çok büyük (' + Math.round(bytes / 1048576) + ' MB). Kayıt sayısını azaltın.');
+        }
+        return json;
+    } catch (err) {
+        throw new Error('tam yedek paketi JSON\'a çevrilemedi: ' + (err && err.message));
+    }
+}
+
 /* --- YÖNETİCİ (PRIVATE) YAZMA YETKİSİ --------------------------------------
    Toplu bulut yazımı (POST { jobs:[...] }, saveAllData senkronu) yalnızca
    Master Parola taşıyan isteklere açıktır. Parola istekte X-Master-Password
@@ -402,7 +430,23 @@ module.exports = async (req, res) => {
                 return;
             }
             const raw = await redisCommandArgs(['GET', JOBS_KEY]);
-            sendJson(res, 200, { ok: true, jobs: parseStoredJobs(raw) });
+            const bundle = parseStoredBundle(await redisCommandArgs(['GET', FULL_BACKUP_KEY]));
+            sendJson(res, 200, {
+                ok: true,
+                jobs: parseStoredJobs(raw),
+                tasks: Array.isArray(bundle.tasks) ? bundle.tasks : [],
+                notes: Array.isArray(bundle.notes) ? bundle.notes : [],
+                noteTopics: Array.isArray(bundle.noteTopics) ? bundle.noteTopics : [],
+                noteBoardsAllCleared: Boolean(bundle.noteBoardsAllCleared),
+                files: Array.isArray(bundle.files) ? bundle.files : [],
+                quickNotes: Array.isArray(bundle.quickNotes) ? bundle.quickNotes : [],
+                stickyNotes: Array.isArray(bundle.stickyNotes) ? bundle.stickyNotes : [],
+                weeklyGoal: (bundle.weeklyGoal && typeof bundle.weeklyGoal === 'object') ? bundle.weeklyGoal : null,
+                settings: (bundle.settings && typeof bundle.settings === 'object') ? bundle.settings : null,
+                headerTitles: (bundle.headerTitles && typeof bundle.headerTitles === 'object') ? bundle.headerTitles : null,
+                customListColumns: Array.isArray(bundle.customListColumns) ? bundle.customListColumns : [],
+                savedAt: bundle.savedAt || ''
+            });
             return;
         }
 
@@ -478,7 +522,32 @@ module.exports = async (req, res) => {
             /* SET: komut dizisi formatı — değer URL'de değil, POST gövdesinde. */
             await redisCommandArgs(['SET', JOBS_KEY, serialized]);
 
-            sendJson(res, 200, { ok: true, jobs: next, count: next.length });
+            /* TAM PAKET YAZIMI: { jobs, tasks, notes, files, settings, ... }
+               gövdesiyle gelen tam senkronlarda diğer modüller de Upstash'e
+               yazılır (tek kanonik paket: yaser_full_backup). Yalnızca jobs
+               gönderilmişse diğer modüller mevcut pakette korunur. */
+            let bundlePayload = null;
+            if (body && typeof body === 'object' && (body.bundle === true || body.tasks !== undefined || body.notes !== undefined || body.files !== undefined || body.settings !== undefined)) {
+                const existing = parseStoredBundle(await redisCommandArgs(['GET', FULL_BACKUP_KEY]));
+                const bundle = Object.assign({}, existing);
+                bundle.jobs = next;
+                if (Array.isArray(body.tasks)) bundle.tasks = body.tasks;
+                if (Array.isArray(body.notes)) bundle.notes = body.notes;
+                if (Array.isArray(body.noteTopics)) bundle.noteTopics = body.noteTopics;
+                if (typeof body.noteBoardsAllCleared === 'boolean') bundle.noteBoardsAllCleared = body.noteBoardsAllCleared;
+                if (Array.isArray(body.files)) bundle.files = body.files;
+                if (Array.isArray(body.quickNotes)) bundle.quickNotes = body.quickNotes;
+                if (Array.isArray(body.stickyNotes)) bundle.stickyNotes = body.stickyNotes;
+                if (body.weeklyGoal && typeof body.weeklyGoal === 'object') bundle.weeklyGoal = body.weeklyGoal;
+                if (body.settings && typeof body.settings === 'object') bundle.settings = body.settings;
+                if (body.headerTitles && typeof body.headerTitles === 'object') bundle.headerTitles = body.headerTitles;
+                if (Array.isArray(body.customListColumns)) bundle.customListColumns = body.customListColumns;
+                bundle.savedAt = new Date().toISOString();
+                bundlePayload = serializeBundle(bundle);
+                await redisCommandArgs(['SET', FULL_BACKUP_KEY, bundlePayload]);
+            }
+
+            sendJson(res, 200, { ok: true, jobs: next, count: next.length, bundleSaved: Boolean(bundlePayload) });
             return;
         }
 
