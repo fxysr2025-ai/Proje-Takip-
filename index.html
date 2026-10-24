@@ -1855,10 +1855,10 @@
                 <i class="fa-solid fa-circle-check wm-option-check"></i>
             </div>
             <div class="wm-password-wrap" id="wm-password-wrap" style="display:none;">
-                <label class="wm-pw-label" for="wm-password-input">MASTER PAROLA</label>
-                <input type="password" id="wm-password-input" class="wm-pw-input" autocomplete="current-password"
-                       placeholder="Master Parola" onkeydown="handleWorkModePasswordKeydown(event)">
-                <p class="wm-pw-hint">Parola yalnızca doğrulama anında sunucuya iletilir; tarayıcıda saklanmaz.</p>
+                <label class="wm-pw-label" for="wm-password-input">MASTER PAROLA VEYA 6 HANELİ KOD</label>
+                <input type="password" id="wm-password-input" class="wm-pw-input" autocomplete="off"
+                       placeholder="Master Parola veya 6 Haneli Kod" onkeydown="handleWorkModePasswordKeydown(event)">
+                <p class="wm-pw-hint">Uzun parolanız <b>veya</b> Google Authenticator'daki 6 haneli kodunuzla giriş yapabilirsiniz. Kimlik yalnızca doğrulama anında sunucuya iletilir; tarayıcıda saklanmaz.</p>
             </div>
             <p class="wm-error" id="wm-error" role="alert" style="display:none;"></p>
         </div>

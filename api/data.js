@@ -32,6 +32,119 @@
 
 const crypto = require('crypto');
 
+/* --- TOTP (RFC 6238) — GOOGLE AUTHENTICATOR DOĞRULAMA ----------------------
+   Node.js yerleşik 'crypto' modülüyle çalışır; harici npm paketi GEREKTİRMEZ.
+   · HMAC-SHA1, 30 saniyelik adım, 6 haneli kod.
+   · Saat sapması toleransı: geriye/ileriye 1 adım (±30 sn) penceresi.
+   · Gizli anahtar Vercel ortam değişkeninden okunur: TOTP_SECRET (Base32).
+   Private mod girişi İKİ GEÇERLİ KİMLİK kabul eder: uzun Master Parola
+   VEYA Authenticator'daki 6 haneli kod. Kodlar kısa ömürlü olduğundan
+   yalnızca GİRİŞTE kullanılır; toplu bulut yazımı (jobs SET) için sunucu,
+   girişte süreli imzalı bir oturum belirteci (HMAC-SHA256, timing-safe
+   doğrulamalı) üretir — parola/kod istekler arasında tekrar taşınmaz. */
+const TOTP_STEP_SECONDS = 30;
+const TOTP_WINDOW_STEPS = 1;   /* ±1 adım = ±30 saniye */
+
+const TOTP_SECRET_ENV_CANDIDATES = ['TOTP_SECRET', 'GOOGLE_AUTHENTICATOR_SECRET'];
+
+function resolveTotpSecret() {
+    for (const name of TOTP_SECRET_ENV_CANDIDATES) {
+        const val = process.env[name];
+        if (val && String(val).trim()) return String(val).trim();
+    }
+    return '';
+}
+
+function totpSecretConfigured() {
+    return Boolean(resolveTotpSecret());
+}
+
+/* RFC 4648 Base32 çözücü (A-Z, 2-7, '=' dolgusu). Bozuk girdide null döner. */
+function base32Decode(input) {
+    if (typeof input !== 'string') return null;
+    const clean = input.toUpperCase().replace(/[\s-]/g, '').replace(/=+$/, '');
+    if (!clean.length) return null;
+    let bits = 0;
+    let value = 0;
+    const out = [];
+    for (let i = 0; i < clean.length; i++) {
+        const idx = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'.indexOf(clean[i]);
+        if (idx === -1) return null;
+        value = (value << 5) | idx;
+        bits += 5;
+        if (bits >= 8) {
+            out.push((value >>> (bits - 8)) & 0xff);
+            bits -= 8;
+        }
+    }
+    return Buffer.from(out);
+}
+
+/* Belirli bir sayım adımı için 6 haneli HOTP/TOTP kodu (RFC 4226 kesme). */
+function totpAt(secretBuf, counter) {
+    const msg = Buffer.alloc(8);
+    msg.writeUInt32BE(Math.floor(counter / 0x100000000), 0);
+    msg.writeUInt32BE(counter >>> 0, 4);
+    const digest = crypto.createHmac('sha1', secretBuf).update(msg).digest();
+    const offset = digest[digest.length - 1] & 0x0f;
+    const bin = ((digest[offset] & 0x7f) << 24)
+        | ((digest[offset + 1] & 0xff) << 16)
+        | ((digest[offset + 2] & 0xff) << 8)
+        | (digest[offset + 3] & 0xff);
+    return String(bin % 1000000).padStart(6, '0');
+}
+
+/* Sabit süreli string karşılaştırması (timing-safe). */
+function safeEqualStr(a, b) {
+    const bufA = Buffer.from(String(a), 'utf8');
+    const bufB = Buffer.from(String(b), 'utf8');
+    if (bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
+}
+
+/* Verilen kodun şu anki (±pencere) TOTP kodlarından biri olup olmadığı. */
+function totpVerify(code, windowSteps) {
+    if (!/^\d{6}$/.test(String(code || ''))) return false;
+    const secretB32 = resolveTotpSecret();
+    if (!secretB32) return false;
+    const key = base32Decode(secretB32);
+    if (!key || !key.length) return false;
+    const step = Math.floor(Date.now() / 1000 / TOTP_STEP_SECONDS);
+    const w = (typeof windowSteps === 'number' && windowSteps >= 0) ? windowSteps : TOTP_WINDOW_STEPS;
+    for (let i = -w; i <= w; i++) {
+        if (safeEqualStr(String(code), totpAt(key, step + i))) return true;
+    }
+    return false;
+}
+
+/* --- SÜRELİ OTURUM BELİRTİCİ (stateless, serverless uyumlu) -----------------
+   Girişte (parola VEYA TOTP) üretilir: exp.HMAC_imzası biçiminde. İmza anahtarı
+   APP_MASTER_PASSWORD'dır; doğru imza bilinmeden üretilemez. Toplu yazımda
+   X-Session-Token başlığıyla gelir, süresi ve imzası timing-safe doğrulanır. */
+const SESSION_TOKEN_TTL_PASSWORD_MS = 12 * 60 * 60 * 1000;  /* parola girişi: 12 sa */
+const SESSION_TOKEN_TTL_TOTP_MS     = 45 * 60 * 1000;       /* TOTP girişi: 45 dk */
+
+function sessionTokenSignature(exp) {
+    const sig = crypto.createHmac('sha256', resolveMasterPassword())
+        .update('yaser-session:' + exp)
+        .digest('base64');
+    return sig.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function createSessionToken(ttlMs) {
+    const exp = Date.now() + (typeof ttlMs === 'number' ? ttlMs : SESSION_TOKEN_TTL_TOTP_MS);
+    return exp + '.' + sessionTokenSignature(exp);
+}
+
+function sessionTokenValid(token) {
+    if (!token || typeof token !== 'string') return false;
+    const dotIdx = token.indexOf('.');
+    if (dotIdx <= 0) return false;
+    const exp = Number(token.slice(0, dotIdx));
+    if (!Number.isFinite(exp) || exp < Date.now()) return false;
+    return safeEqualStr(token.slice(dotIdx + 1), sessionTokenSignature(exp));
+}
+
 const JOBS_KEY = 'yaser_v10_jobs';
 
 /* --- YÖNETİCİ (PRIVATE) YAZMA YETKİSİ --------------------------------------
@@ -205,7 +318,7 @@ module.exports = async (req, res) => {
        bilinçli olarak daraltılmalıdır. */
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Master-Password');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Master-Password, X-Session-Token, X-Totp-Code');
 
     if (req.method === 'OPTIONS') {
         res.statusCode = 204;
@@ -228,11 +341,30 @@ module.exports = async (req, res) => {
                 sendJson(res, 503, { ok: false, error: 'Sunucuda APP_MASTER_PASSWORD (veya YASER_MASTER_PASSWORD) tanımlı değil; Private mod kullanılamıyor.' });
                 return;
             }
-            if (masterPasswordMatches(String(earlyBody.masterPassword || ''))) {
-                sendJson(res, 200, { ok: true, mode: 'private' });
+            /* İKİ GEÇERLİ KİMLİK: uzun Master Parola VEYA Authenticator 6 haneli kod.
+               6 rakamlı girdi TOTP olarak (±30 sn pencere), aksi hâlde parola
+               olarak doğrulanır. Her iki yol da timing-safe karşılaştırma kullanır. */
+            const supplied = String(earlyBody.masterPassword || '');
+            const looksTotp = /^\d{6}$/.test(supplied);
+            const totpReady = totpSecretConfigured();
+            let ok = false;
+            let via = '';
+            if (looksTotp && totpReady) {
+                if (totpVerify(supplied)) { ok = true; via = 'totp'; }
+            } else if (!looksTotp && masterPasswordMatches(supplied)) {
+                ok = true; via = 'password';
+            } else if (totpReady) {
+                if (totpVerify(supplied)) { ok = true; via = 'totp'; }
+            }
+            if (ok) {
+                /* Başarılı girişte süreli oturum belirteci verilir: toplu bulut
+                   yazımı bundan böyle parola yerine bu belirteçle yetkilendirilir. */
+                const tokenTtl = looksTotp ? SESSION_TOKEN_TTL_TOTP_MS : SESSION_TOKEN_TTL_PASSWORD_MS;
+                const sessionToken = createSessionToken(tokenTtl);
+                sendJson(res, 200, { ok: true, mode: 'private', via: via, sessionToken: sessionToken, tokenTtlMs: tokenTtl });
             } else {
-                console.warn('[/api/data] 403: Private mod parola doğrulaması başarısız (hatalı parola).');
-                sendJson(res, 403, { ok: false, error: 'Hatalı Master Parola. Erişim reddedildi.' });
+                console.warn('[/api/data] 403: Private mod doğrulaması başarısız (parola/TOTP).');
+                sendJson(res, 403, { ok: false, error: 'Hatalı parola veya kod. Erişim reddedildi.' });
             }
             return;
         }
@@ -245,8 +377,30 @@ module.exports = async (req, res) => {
     }
 
     try {
-        /* ---------------- GET: tüm jobs dizisini döndür ---------------- */
+        /* ------------ GET ?setup=totp: otpauth URI üretimi (yönetici) ---------
+           Google Authenticator eşleştirmesi için. İstek Master Parola veya
+           geçerli oturum belirteci taşımak ZORUNDADIR; TOTP gizli anahtarı
+           ASLA yanıt içinde döndürülmez — yalnızca otpauth URI üretilir
+           (Authenticator zaten URI üzerinden taranır). */
         if (req.method === 'GET') {
+            const urlObj = new URL(req.url, 'http://localhost');
+            if (urlObj.searchParams.get('setup') === 'totp') {
+                const authPw = (req.headers && req.headers['x-master-password']) || '';
+                const authTk = (req.headers && req.headers['x-session-token']) || '';
+                const authed = masterPasswordMatches(String(authPw || '')) || sessionTokenValid(String(authTk || ''));
+                if (!authed) {
+                    sendJson(res, 403, { ok: false, error: 'Yetkisiz: otpauth URI yalnızca Master Parola veya geçerli oturum belirteciyle alınabilir.' });
+                    return;
+                }
+                if (!totpSecretConfigured()) {
+                    sendJson(res, 503, { ok: false, error: 'Sunucuda TOTP_SECRET (Base32) ortam değişkeni tanımlı değil.' });
+                    return;
+                }
+                const uri = 'otpauth://totp/ProjeTakip:Admin?secret=' + encodeURIComponent(resolveTotpSecret())
+                    + '&issuer=ProjeTakip&algorithm=SHA1&digits=6&period=30';
+                sendJson(res, 200, { ok: true, otpauthUri: uri });
+                return;
+            }
             const raw = await redisCommandArgs(['GET', JOBS_KEY]);
             sendJson(res, 200, { ok: true, jobs: parseStoredJobs(raw) });
             return;
@@ -263,8 +417,11 @@ module.exports = async (req, res) => {
             const incomingJobs = body && Array.isArray(body.jobs) ? body.jobs : null;
 
             /* TOPLU YAZIM YETKİ KONTROLÜ (Private mod / yönetici tam senkronu):
-               { jobs:[...] } gövdeli istekler Master Parola taşımak zorundadır.
-               Guest form akışı ({ job:{...} }) bu kontrolün dışındadır. */
+               { jobs:[...] } gövdeli istekler yetki taşımak zorundadır. Yetki
+               İKİ YOL: (a) verify'dan alınan süreli X-Session-Token (tercih
+               edilen; parola/kod istekler arasında tekrar taşınmaz) veya
+               (b) doğrudan Master Parola (X-Master-Password). Guest form
+               akışı ({ job:{...} }) bu kontrolün DIŞINDADIR. */
             if (incomingJobs) {
                 if (!masterPasswordConfigured()) {
                     logMissingMasterPassword();
@@ -274,12 +431,18 @@ module.exports = async (req, res) => {
                     });
                     return;
                 }
-                const supplied = (req.headers && req.headers['x-master-password'])
-                    || (body && typeof body.masterPassword === 'string' ? body.masterPassword : '');
-                if (!masterPasswordMatches(String(supplied || ''))) {
-                    console.warn('[/api/data] 403: Toplu yazım reddedildi — Master Parola eksik veya hatalı.');
-                    sendJson(res, 403, { ok: false, error: 'Yetkisiz istek: Master Parola doğrulaması başarısız. Toplu bulut yazımı yalnızca Private (yönetici) modda yapılabilir.' });
-                    return;
+                const sessionToken = (req.headers && (req.headers['x-session-token'] || req.headers['X-Session-Token']))
+                    || (body && typeof body.sessionToken === 'string' ? body.sessionToken : '');
+                if (sessionToken && sessionTokenValid(String(sessionToken))) {
+                    /* Süreli belirteç geçerli: yetki verildi. */
+                } else {
+                    const supplied = (req.headers && req.headers['x-master-password'])
+                        || (body && typeof body.masterPassword === 'string' ? body.masterPassword : '');
+                    if (!masterPasswordMatches(String(supplied || ''))) {
+                        console.warn('[/api/data] 403: Toplu yazım reddedildi — geçerli oturum belirteci veya Master Parola yok.');
+                        sendJson(res, 403, { ok: false, error: 'Yetkisiz istek: Oturum belirteci/Master Parola doğrulaması başarısız. Toplu bulut yazımı yalnızca Private (yönetici) modda yapılabilir.' });
+                        return;
+                    }
                 }
             }
 

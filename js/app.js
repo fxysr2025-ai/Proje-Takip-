@@ -11881,6 +11881,9 @@ const WORK_MODE_STORAGE_KEY = 'yaser_v10_work_mode';   /* 'public' | 'private' *
 
 let workMode = 'public';            /* aktif çalışma modu (RAM) */
 let workModeMasterPassword = '';    /* yalnızca Private oturumu boyunca RAM'de */
+let workModeSessionToken = '';      /* süreli oturum belirteci (yalnızca RAM) */
+let workModeAuthVia = '';           /* 'password' | 'totp' */
+let workModeTotpExpiryTimer = null; /* TOTP oturumu süre uyarı sayacı */
 let workModeBridgeInstalled = false;
 
 function isWorkModePrivate() {
@@ -12002,12 +12005,21 @@ function showWorkModeError(msg) {
 }
 
 
-/* Private girişte parolanın bulut tarafından doğrulanması. */
-function verifyMasterPasswordWithCloud(password) {
+/* Private girişte kimliğin bulut tarafından doğrulanması.
+   İKİ GEÇERLİ KİMLİK: 6 haneli rakam → TOTP kodu (X-Totp-Code başlığı),
+   aksi hâlde uzun Master Parola (X-Master-Password). Sunucu başarılı girişte
+   süreli oturum belirteci (sessionToken) döndürür; belirteç yalnızca RAM'de
+   tutulur ve toplu bulut yazımında X-Session-Token ile taşınır — parola/kod
+   asla istekler arasında tekrar gönderilmez. */
+function verifyMasterPasswordWithCloud(credential) {
+    const isTotp = /^\d{6}$/.test(String(credential || ''));
+    const headers = { 'Content-Type': 'application/json' };
+    if (isTotp) headers['X-Totp-Code'] = String(credential);
+    else headers['X-Master-Password'] = String(credential || '');
     return fetch(CLOUD_API_ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'verify', masterPassword: password })
+        headers: headers,
+        body: JSON.stringify({ action: 'verify', masterPassword: String(credential || '') })
     }).then(r => {
         if (r.status === 403) {
             const err = new Error('wrong-password');
@@ -12022,6 +12034,12 @@ function verifyMasterPasswordWithCloud(password) {
         return r.json();
     }).then(payload => {
         if (!payload || payload.ok !== true) throw new Error('verify-failed');
+        /* Süreli oturum belirteci: yalnızca RAM'de, sekme kapanınca düşer. */
+        workModeSessionToken = (payload.sessionToken && typeof payload.sessionToken === 'string') ? payload.sessionToken : '';
+        workModeAuthVia = payload.via || (isTotp ? 'totp' : 'password');
+        if (payload.via === 'totp' && typeof payload.tokenTtlMs === 'number' && payload.tokenTtlMs > 0) {
+            startWorkModeTotpExpiryWatch(payload.tokenTtlMs);
+        }
         return true;
     });
 }
@@ -12062,6 +12080,68 @@ function applySelectedWorkMode() {
         })
         .finally(() => {
             if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i> Devam Et'; }
+        });
+}
+
+
+/* --- TOTP OTURUM SÜRESİ + otpauth URI YARDIMCISI ---------------------------
+   · TOTP ile açılan Private oturumlar kısa ömürlüdür (sunucu 45 dk belirteç
+     verir). Süre dolduğunda kullanıcı bilgilendirilir ve bulut köprüsü
+     güvenli biçimde kapatılır (Public'e dönülür; yerel izler purge edilir).
+   · buildTotpSetupUri(): EŞLEŞTİRME YARDIMCISI. Sunucu ?setup=totp ucundan
+     yetkili istekle otpauth URI'sini çeker (gizli anahtar sunucudan
+     çıkmaz, URI Authenticator'a okutulur). TOTP_SECRET sunucuda yoksa
+     yerel üretim de mümkündür: yerelBase32 girilirse URI kurulur.
+   ========================================================================== */
+function stopWorkModeTotpExpiryWatch() {
+    if (workModeTotpExpiryTimer) {
+        clearTimeout(workModeTotpExpiryTimer);
+        workModeTotpExpiryTimer = null;
+    }
+}
+
+function startWorkModeTotpExpiryWatch(ttlMs) {
+    stopWorkModeTotpExpiryWatch();
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) return;
+    workModeTotpExpiryTimer = setTimeout(function () {
+        if (!isWorkModePrivate() || workModeAuthVia !== 'totp') return;
+        /* Süre doldu: güvenli çıkış (purge + köprü kapanır). */
+        enterPublicWorkMode(true);
+        if (typeof showToast === 'function') {
+            showToast('TOTP oturumunun süresi doldu; güvenlik için Yerel Mod\'a geçildi. Devam için yeniden giriş yapın.', 'info');
+        }
+    }, ttlMs);
+}
+
+/* Yerel üretim: kullanıcı TOTP gizlisini biliyorsa URI'yi kendisi kurabilir.
+   (Sunucudaki ?setup=totp ucu tercih edilir; bu yedek kolaylıktır.) */
+function buildTotpSetupUri(base32Secret, label, issuer) {
+    if (!/^[A-Z2-7=\s-]+$/i.test(String(base32Secret || ''))) {
+        if (typeof showToast === 'function') showToast('Geçersiz Base32 gizli anahtar.', 'error');
+        return '';
+    }
+    return 'otpauth://totp/' + encodeURIComponent(label || 'ProjeTakip:Admin')
+        + '?secret=' + encodeURIComponent(String(base32Secret).replace(/[\s-]/g, '').toUpperCase())
+        + '&issuer=' + encodeURIComponent(issuer || 'ProjeTakip')
+        + '&algorithm=SHA1&digits=6&period=30';
+}
+
+/* Yönetici yardımcısı: sunucudan otpauth URI'sini çeker ve konsola yazar.
+   Ayarlar'daki bir butona bağlanabilir; TOTP_SECRET sunucuda tanımlı olmalı. */
+function fetchTotpSetupUri() {
+    const headers = { 'Content-Type': 'application/json' };
+    if (typeof workModeSessionToken !== 'undefined' && workModeSessionToken) headers['X-Session-Token'] = workModeSessionToken;
+    else if (typeof workModeMasterPassword !== 'undefined' && workModeMasterPassword) headers['X-Master-Password'] = workModeMasterPassword;
+    return fetch(CLOUD_API_ENDPOINT + '?setup=totp', { headers: headers, cache: 'no-store' })
+        .then(r => r.json())
+        .then(payload => {
+            if (payload && payload.ok && payload.otpauthUri) {
+                if (typeof console !== 'undefined' && console.info) {
+                    console.info('[totp] Google Authenticator eşleştirme URI\'si:\n' + payload.otpauthUri);
+                }
+                return payload.otpauthUri;
+            }
+            throw new Error((payload && payload.error) || 'URI alınamadı');
         });
 }
 
@@ -12134,6 +12214,9 @@ function enterPublicWorkMode(refreshUi) {
     const wasPrivate = isWorkModePrivate();
     workMode = 'public';
     workModeMasterPassword = '';
+    workModeSessionToken = '';
+    workModeAuthVia = '';
+    stopWorkModeTotpExpiryWatch();
     storeWorkMode('public');
 
     /* Emniyet kilidi: pushCloudJobs Public modda yazım reddeder. */
@@ -12167,6 +12250,10 @@ function enterPublicWorkMode(refreshUi) {
 function enterPrivateWorkMode() {
     workMode = 'private';
     storeWorkMode('private');
+
+    /* Önceki oturumun kalıntıları temiz başlangıç sağlar (purge sonrası
+       zaten boştur; TOTP/parola karışmasını da önler). */
+    stopWorkModeTotpExpiryWatch();
 
     installWorkModeBridge();
 
@@ -12217,8 +12304,11 @@ function initWorkMode() {
     }
     workMode = 'public';
     workModeMasterPassword = '';
+    workModeSessionToken = '';
+    workModeAuthVia = '';
+    stopWorkModeTotpExpiryWatch();
     if (stored === 'private' && typeof console !== 'undefined' && console.info) {
-        console.info('[mode] Kayıtlı tercih Private; parola doğrulaması için rozet kullanılabilir.');
+        console.info('[mode] Kayıtlı tercih Private; parola veya TOTP kodu ile rozetten giriş yapılabilir.');
     }
     installWorkModeBridge();
     updateWorkModeBadge();
@@ -12660,7 +12750,16 @@ function fetchCloudJobs() {
 
 function pushCloudJobs(jobsArray) {
     const wmHeaders = { 'Content-Type': 'application/json' };
-    if (typeof isWorkModePrivate === 'function' && isWorkModePrivate() && typeof workModeMasterPassword !== 'undefined' && workModeMasterPassword) { wmHeaders['X-Master-Password'] = workModeMasterPassword; }
+    if (typeof isWorkModePrivate === 'function' && isWorkModePrivate()) {
+        /* Yetki tercihi: süreli oturum belirteci varsa o taşınır; parola/kod
+           asla istekler arasında tekrar gönderilmez. Belirteç yoksa (eski
+           oturum) geriye dönük uyum için parola kullanılır. */
+        if (typeof workModeSessionToken !== 'undefined' && workModeSessionToken) {
+            wmHeaders['X-Session-Token'] = workModeSessionToken;
+        } else if (typeof workModeMasterPassword !== 'undefined' && workModeMasterPassword) {
+            wmHeaders['X-Master-Password'] = workModeMasterPassword;
+        }
+    }
     return fetch(CLOUD_API_ENDPOINT, {
         method: 'POST',
         headers: wmHeaders,
