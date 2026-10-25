@@ -1894,23 +1894,31 @@
 
         .topbar-right-box { display: flex; align-items: center; gap: 10px; z-index: 2; }
         
+        /* TARİH & SAAT: kaba dikdörtgen kutu yerine minimalist tipografi rozeti —
+           yarı saydam, çerçevesiz, yalnızca tipografi ve ince ayraçla tema diliyle uyumlu. */
         .topbar-clock-widget {
             display: flex;
             align-items: center;
-            gap: 6px;
-            padding: 3px 8px;
-            background: var(--input-bg);
-            border: 1px solid var(--surface-border);
-            border-radius: var(--radius-sm);
-            font-size: 13.2px;
-            font-weight: 700;
-            color: var(--color-primary);
-            box-shadow: var(--shadow-xs);
+            gap: 7px;
+            padding: 2px 10px;
+            background: transparent;
+            border: none;
+            border-radius: 999px;
+            font-size: 12.4px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            font-variant-numeric: tabular-nums;
+            color: var(--txt-sub);
+            box-shadow: none;
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
         }
         .topbar-clock-widget i {
             color: var(--color-amber);
-            font-size: 13.2px;
+            font-size: 12px;
+            opacity: 0.75;
         }
+        .topbar-clock-widget #clock-text { opacity: 0.92; }
 
         .topbar-actions { display: flex; align-items: center; gap: 6px; z-index: 2; }
         .topbar-btn { 
@@ -3894,6 +3902,26 @@
             color: var(--note-title-color, var(--txt-main));
             font-weight: 700;
         }
+
+        /* --- NOT AKORDİYONU: başlıkta yalnızca başlık + etiketler görünür;
+           içerik .acc-open ile açılır (tek-açık kuralı JS: toggleNoteAccordion). */
+        .note-card-title { cursor: pointer; user-select: none; display: flex; align-items: flex-start; gap: 6px; }
+        .note-card-title .note-acc-caret {
+            font-size: 10px; opacity: 0.7; margin-top: 3px;
+            transition: transform var(--transition-fast);
+        }
+        .note-card-box.acc-open .note-card-title .note-acc-caret { transform: rotate(180deg); }
+        .note-acc-body {
+            display: grid;
+            grid-template-rows: 0fr;
+            overflow: hidden;
+            transition: grid-template-rows 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .note-acc-body > .note-card-body { min-height: 0; margin: 0; }
+        .note-card-box.acc-open .note-acc-body { grid-template-rows: 1fr; margin-top: 4px; }
+        @media (prefers-reduced-motion: reduce) {
+            .note-acc-body { transition: none; }
+        }
         .note-card-body {
             font-size: 13.2px;
             color: var(--txt-sub);
@@ -4194,6 +4222,44 @@
         .excel-filter-item { padding: 5px 8px; font-size: 11.5px; color: var(--txt-main); font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: background var(--transition-fast); }
         .excel-filter-item:hover { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); }
         .excel-filter-item.active { font-weight: 700; color: var(--color-primary); background: rgba(59, 130, 246, 0.2); }
+
+        /* --- TÜM İŞLER TABLOSU: MINIMALIST AÇILIR FİLTRE BUTONLARI (pill) ---------
+           Tablo başlıklarındaki filtre tetikleyicileri artık `th` genelinde değil,
+           yalnızca pill buton üzerindedir. Pill: küçük, yuvarlak, minimalist;
+           aktif filtre varken dolgulu vurgu kazanır. */
+        .th-filter-pill {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 2px 9px; border-radius: 999px; cursor: pointer;
+            border: 1px solid var(--surface-border);
+            background: var(--surface-glass, rgba(148, 163, 184, 0.10));
+            color: var(--txt-sub);
+            font-size: 9.6px; font-weight: 800; letter-spacing: 0.4px;
+            text-transform: uppercase; white-space: nowrap;
+            transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+            position: relative;
+        }
+        .th-filter-pill i { font-size: 8.4px; opacity: 0.75; }
+        .th-filter-pill:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(59, 130, 246, 0.12); }
+        .th-filter-pill.filter-icon-active {
+            border-color: var(--color-primary);
+            color: var(--color-primary);
+            background: rgba(59, 130, 246, 0.18);
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.16);
+        }
+        .th-filter-pill.filter-icon-active i { opacity: 1; }
+        /* AÇILIR OK (chevron): örnekteki (Brand / Price / Category) dropdown diline
+           uyar. Menü açıkken ya da filtre aktifken ok yumuşakça 180° döner. */
+        .th-filter-pill .th-filter-caret {
+            font-size: 8.6px; opacity: 0.7;
+            transition: transform var(--transition-fast), opacity var(--transition-fast);
+        }
+        .th-filter-pill.filter-icon-active .th-filter-caret { opacity: 1; }
+        .th-filter-pill.filter-menu-open .th-filter-caret { transform: rotate(180deg); }
+        @media (prefers-reduced-motion: reduce) {
+            .th-filter-pill .th-filter-caret { transition: none; }
+        }
+        [data-theme="light"] .th-filter-pill { background: rgba(100, 116, 139, 0.08); }
+        [data-theme="light"] .th-filter-pill.filter-icon-active { background: rgba(59, 130, 246, 0.12); }
 
         .tag { display: inline-flex; align-items: center; padding: 2px 6px; border-radius: 4px; font-size: 10.5px; font-weight: 700; white-space: nowrap; line-height: 1.15; height: 20px; margin: 0; }
         

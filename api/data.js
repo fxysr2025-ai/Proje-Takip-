@@ -154,6 +154,10 @@ const JOBS_KEY = 'yaser_v10_jobs';
    (jobs aynası); her yazımda paket ile ayna senkron tutulur. */
 const FULL_BACKUP_KEY = 'yaser_full_backup';
 
+/* GUEST İLETİ KUYRUĞU: dış form müellif güncellemelerinin yönetici
+   bildirimleri. GET tarafında okunur, panel sağ odak kutusunda gösterilir. */
+const GUEST_MESSAGES_KEY = 'yaser_guest_messages';
+
 function parseStoredBundle(raw) {
     if (!raw) return {};
     try {
@@ -431,6 +435,15 @@ module.exports = async (req, res) => {
             }
             const raw = await redisCommandArgs(['GET', JOBS_KEY]);
             const bundle = parseStoredBundle(await redisCommandArgs(['GET', FULL_BACKUP_KEY]));
+            /* GUEST İLETİLERİ: sağ odak bildirim kutusunun kaynağı. Yalnızca
+               dış form güncellemeleri bu kuyruğa yazılır; okunması serbesttir
+               (içerikte parola/kimlik yoktur, mesaj metnidir). */
+            let guestMessages = [];
+            try {
+                const gHam = await redisCommandArgs(['GET', GUEST_MESSAGES_KEY]);
+                const gCoz = JSON.parse(gHam || '[]');
+                if (Array.isArray(gCoz)) guestMessages = gCoz;
+            } catch (e) { guestMessages = []; }
             sendJson(res, 200, {
                 ok: true,
                 jobs: parseStoredJobs(raw),
@@ -445,6 +458,8 @@ module.exports = async (req, res) => {
                 settings: (bundle.settings && typeof bundle.settings === 'object') ? bundle.settings : null,
                 headerTitles: (bundle.headerTitles && typeof bundle.headerTitles === 'object') ? bundle.headerTitles : null,
                 customListColumns: Array.isArray(bundle.customListColumns) ? bundle.customListColumns : [],
+                profile: (bundle.profile && typeof bundle.profile === 'object') ? bundle.profile : null,
+                guestMessages: guestMessages,
                 savedAt: bundle.savedAt || ''
             });
             return;
@@ -513,6 +528,26 @@ module.exports = async (req, res) => {
                 next = current.slice();
                 if (idx >= 0) next[idx] = incomingJob;
                 else next.unshift(incomingJob);
+
+                /* GUEST İLETİ KUYRUĞU: dış form (?mode=guest_form) üzerinden gelen
+                   güncelleme başarılıysa profesyonel bildirim metni Upstash'te
+                   saklanır. Yönetici paneli bunu GET ile çekip sağ odak bildirim
+                   kutusunda gösterir. Bildirim yalnızca bu akışta üretilir. */
+                if (body && typeof body.guestMessage === 'string' && body.guestMessage.trim()) {
+                    try {
+                        const mevcutHam = await redisCommandArgs(['GET', GUEST_MESSAGES_KEY]);
+                        let mevcut = [];
+                        try {
+                            const cozulen = JSON.parse(mevcutHam || '[]');
+                            if (Array.isArray(cozulen)) mevcut = cozulen;
+                        } catch (e) { mevcut = []; }
+                        mevcut.unshift({ text: String(body.guestMessage).slice(0, 400), at: String(body.guestMessageAt || new Date().toISOString()), jobId: guestId });
+                        mevcut = mevcut.slice(0, 30);
+                        await redisCommandArgs(['SET', GUEST_MESSAGES_KEY, JSON.stringify(mevcut)]);
+                    } catch (e) {
+                        console.warn('[/api/data] Guest bildirim anahtarı yazılamadı:', e && e.message ? e.message : e);
+                    }
+                }
             }
 
             /* Serileştirme ÖNCE yapılır: dairesel referans / aşırı büyük yük
@@ -542,6 +577,7 @@ module.exports = async (req, res) => {
                 if (body.settings && typeof body.settings === 'object') bundle.settings = body.settings;
                 if (body.headerTitles && typeof body.headerTitles === 'object') bundle.headerTitles = body.headerTitles;
                 if (Array.isArray(body.customListColumns)) bundle.customListColumns = body.customListColumns;
+                if (body.profile && typeof body.profile === 'object') bundle.profile = body.profile;
                 bundle.savedAt = new Date().toISOString();
                 bundlePayload = serializeBundle(bundle);
                 await redisCommandArgs(['SET', FULL_BACKUP_KEY, bundlePayload]);

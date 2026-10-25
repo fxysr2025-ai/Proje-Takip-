@@ -72,14 +72,14 @@
             <div class="splash-tech-tag">// ETÜT PROJE VE SAHA OPERASYON YÖNETİMİ</div>
             <div class="splash-title">PROJE YÖNETİM PANELİ</div>
             <div class="splash-percent" id="splash-percent" aria-live="polite">
-                <span class="pct-value" id="splash-percent-value">000</span><span class="pct-suffix">%</span>
+                <span class="pct-value" id="splash-percent-value">0</span><span class="pct-suffix">%</span>
             </div>
             <div class="splash-percent-caption">Yükleme İlerlemesi</div>
             <div class="splash-loader">
                 <div class="splash-loader-bar" id="splash-loader-bar"></div>
             </div>
             <div class="splash-loader-row">
-                <span id="splash-loader-pct-inline">000%</span>
+                <span id="splash-loader-pct-inline">0%</span>
                 <span class="bar-end" id="splash-loader-stage">0 / 100</span>
             </div>
             <div class="splash-status" id="splash-status">Sistem başlatılıyor...</div>
@@ -400,11 +400,10 @@
                         <i class="fa-solid fa-lock-open wm-badge-icon"></i>
                         <span class="wm-badge-text">Yerel Mod (Public — Bulut Kapalı)</span>
                     </button>
-                    <!-- UYGULAMA KİLİDİ: AES-GCM şifreli oturumu RAM'den düşürüp
-                         kilit ekranına döner. Erişilen hiçbir ID değiştirilmedi. -->
-                    <button class="topbar-btn" id="zk-lock-btn" onclick="lockApp()" title="Uygulamayı Kilitle" aria-label="Uygulamayı Kilitle">
-                        <i class="fa-solid fa-lock"></i>
-                    </button>
+                    <!-- UYGULAMA KİLİDİ BUTONU kaldırıldı: Private oturum kapatma artık
+                         "Bulut Bağlı (Private)" rozeti üzerinden onaylı çıkışla yapılır
+                         (confirmPrivateLogout). lockApp() işlevi Ayarlar > Güvenlik'te
+                         yaşamaya devam eder. -->
                     <button class="topbar-btn" id="undo-btn" onclick="undoLastChange()" disabled title="Geri alınacak işlem yok">
                         <i class="fa-solid fa-rotate-left"></i><span class="undo-btn-label">Geri Al</span>
                     </button>
@@ -777,32 +776,35 @@
                                 <tr>
                                     <!-- SIRA NUMARASI SÜTUNU -->
                                     <th class="col-number-header">#</th>
-                                    <th style="position:relative;" onclick="toggleExcelFilterMenu(event, 'section')">
-                                        <span class="dynamic-col-projeTuru th-two-line">KATEGORİ<br>/ PROTOKOL</span> <i class="fa-solid fa-filter"></i>
+                                    <th>
+                                        <!-- SÜTUN BAŞLIĞI + FİLTRE: örnekteki (Brand / Price / Category)
+                                             dropdown diline uyar — metin + sağda açılır ok (chevron).
+                                             Aktif filtre varsa pill dolgulu vurgu kazanır ve ok döner. -->
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'section')"><span class="dynamic-col-projeTuru th-two-line">KATEGORİ<br>/ PROTOKOL</span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-section"></div>
                                     </th>
-                                    <th style="position:relative;" onclick="toggleExcelFilterMenu(event, 'tur')">
-                                        <span class="dynamic-col-tur">TÜR</span> <i class="fa-solid fa-filter"></i>
+                                    <th>
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'tur')"><span class="dynamic-col-tur">TÜR</span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-tur"></div>
                                     </th>
-                                    <th style="position:relative;" onclick="toggleExcelFilterMenu(event, 'il')">
-                                        İL / İLÇE <i class="fa-solid fa-filter"></i>
+                                    <th>
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'il')">İL / İLÇE <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-il"></div>
                                     </th>
-                                    <th style="position:relative;" onclick="toggleExcelFilterMenu(event, 'is_tanimi')">
-                                        İŞ TANIMI <i class="fa-solid fa-filter"></i>
+                                    <th>
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'is_tanimi')">İŞ TANIMI <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-is_tanimi"></div>
                                     </th>
-                                    <th style="position:relative;" onclick="toggleExcelFilterMenu(event, 'proje')">
-                                        <span class="dynamic-col-projeMusaviri">PROJE MÜŞAVİRİ</span> /<br><span class="dynamic-col-altYuklenici">ALT YÜKLENİCİ</span> <i class="fa-solid fa-filter"></i>
+                                    <th>
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'proje')"><span class="dynamic-col-projeMusaviri">PROJE MÜŞAVİRİ</span> /<br><span class="dynamic-col-altYuklenici">ALT YÜKLENİCİ</span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-proje"></div>
                                     </th>
-                                    <th style="position:relative;" onclick="toggleExcelFilterMenu(event, 'asama')">
-                                        <span class="dynamic-col-asama">AŞAMA</span> <i class="fa-solid fa-filter"></i>
+                                    <th>
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'asama')"><span class="dynamic-col-asama">AŞAMA</span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-asama"></div>
                                     </th>
-                                    <th style="position:relative;" onclick="toggleExcelFilterMenu(event, 'last_timeline')">
-                                        SON TIMELINE NOTU <i class="fa-solid fa-filter"></i>
+                                    <th>
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'last_timeline')">SON TIMELINE NOTU <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-last_timeline"></div>
                                     </th>
                                     <th style="text-align: center;">İŞLEMLER</th>
@@ -923,7 +925,7 @@
 
                             <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
                                 <button class="btn btn-primary" id="zk-change-btn" onclick="changeMasterPassword()"><i class="fa-solid fa-key"></i> Parolayı Değiştir</button>
-                                <button class="btn btn-secondary" onclick="lockApp()"><i class="fa-solid fa-lock"></i> Kilitle</button>
+                                <!-- KİLİT BUTONU TAMAMEN KALDIRILDI (yanlış çalışıyordu). Private çıkış artık rozet üzerinden onaylı yapılır; lockApp() yalnızca iç akışlarda (şifreli yedek / GitHub) kullanılır. -->
                                 <span id="zk-change-feedback" style="font-size: 11.5px; color: var(--txt-muted);"></span>
                             </div>
                         </div>
@@ -1823,17 +1825,15 @@
     }
 </style>
 
-<!-- MOD SEÇİM MODALI: mevcut .modal-overlay/.modal-card cam dilini kullanır. -->
+<!-- MOD SEÇİM MODALI: mevcut .modal-overlay/.modal-card cam dilini kullanır.
+     BAŞLIK BÖLGESİ: "Nasıl çalışmak istersiniz?" sorusu ve açıklama paragrafı
+     kaldırıldı; kart açıklamaları yeterli. Yerine Kinetik Tipografi efektli
+     büyük karşılama başlığı geldi (JS: initKineticWelcomeTitle). -->
 <div class="modal-overlay" id="work-mode-modal" onclick="if (event.target === this) closeWorkModeModal()">
     <div class="modal-card wm-modal-card">
         <div class="modal-header wm-modal-header">
             <div class="wm-modal-title-box">
-                <div class="wm-modal-eyebrow">ÇALIŞMA MODU</div>
-                <h3 class="wm-modal-title">Nasıl çalışmak istersiniz?</h3>
-                <p class="wm-modal-desc">
-                    <b>Public (Yerel):</b> Şifresiz açılır; tüm değişiklikler yalnızca bu tarayıcıda saklanır, buluta hiçbir şey yazılmaz.<br>
-                    <b>Private (Bulut / Yönetici):</b> Master Parola ile açılır; değişiklikler Upstash bulutuna yazılır.
-                </p>
+                <h2 class="wm-welcome-title" id="wm-welcome-title" aria-label="PROJE YÖNETİM PANELİNE HOŞ GELDİNİZ"></h2>
             </div>
             <button class="wm-modal-close" onclick="closeWorkModeModal()" title="Kapat" aria-label="Kapat"><i class="fa-solid fa-xmark"></i></button>
         </div>
@@ -1874,9 +1874,34 @@
     #work-mode-modal { z-index: 100500; }
     #work-mode-modal .wm-modal-card { max-width: 560px; width: 100%; }
     .wm-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-    .wm-modal-eyebrow { font-size: 10px; font-weight: 800; letter-spacing: 1.2px; color: var(--txt-muted); margin-bottom: 4px; }
-    .wm-modal-title { font-family: var(--font-family-heading); font-size: 17px; font-weight: 800; color: var(--txt-main); margin: 0 0 6px; }
-    .wm-modal-desc { font-size: 11.8px; line-height: 1.6; color: var(--txt-muted); margin: 0; }
+    /* KİNETİK TİPOGRAFİ BAŞLIĞI: her kelime ayrı span; hover'da harfler
+       dalga gibi hafifçe yükselip parlar (Magic UI "Kinetic Text" ruhunda).
+       prefers-reduced-motion'da tüm hareket kapanır. */
+    .wm-welcome-title {
+        font-family: var(--font-family-heading);
+        font-size: clamp(17px, 2.6vw, 21px);
+        font-weight: 900;
+        letter-spacing: 0.6px;
+        color: var(--txt-main);
+        margin: 0 0 10px;
+        line-height: 1.25;
+        text-transform: uppercase;
+    }
+    .wm-welcome-title .wm-kin-word { display: inline-block; white-space: nowrap; margin-right: 0.32em; }
+    .wm-welcome-title .wm-kin-word:last-child { margin-right: 0; }
+    .wm-welcome-title .wm-kin-ch {
+        display: inline-block;
+        transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.28s ease, text-shadow 0.28s ease;
+        will-change: transform;
+    }
+    .wm-welcome-title:hover .wm-kin-ch,
+    .wm-welcome-title .wm-kin-word:hover .wm-kin-ch { color: var(--color-primary); }
+    .wm-welcome-title .wm-kin-word:hover .wm-kin-ch { text-shadow: 0 0 14px rgba(59, 130, 246, 0.45); }
+    .wm-welcome-title .wm-kin-ch.wm-kin-up { transform: translateY(-5px) rotate(-2.5deg) scale(1.07); }
+    @media (prefers-reduced-motion: reduce) {
+        .wm-welcome-title .wm-kin-ch { transition: none; }
+        .wm-welcome-title .wm-kin-ch.wm-kin-up { transform: none; }
+    }
     .wm-modal-close { background: transparent; border: none; color: var(--txt-muted); font-size: 16px; cursor: pointer; padding: 6px; border-radius: var(--radius-sm); }
     .wm-modal-close:hover { background: var(--surface-glass); color: var(--txt-main); }
     .wm-modal-body { display: flex; flex-direction: column; gap: 10px; }

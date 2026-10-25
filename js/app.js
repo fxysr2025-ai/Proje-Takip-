@@ -503,7 +503,7 @@ function startSplashLoader() {
         barEl.style.width = pct + '%';
 
         if (pct !== lastPct) {
-            pctEl.textContent = String(pct).padStart(3, '0');
+            pctEl.textContent = String(pct);
             if (pctInlineEl) pctInlineEl.textContent = pct + '%';
             if (stageEl) stageEl.textContent = pct + ' / 100';
 
@@ -539,6 +539,19 @@ function startSplashLoader() {
         }
     }
     requestAnimationFrame(tick);
+}
+
+/* Açılış animasyonu ARTIK mod seçiminden SONRA çalışır: sayfa ilk açıldığında
+   doğrudan Public/Private kartları görünür; loader yalnızca kullanıcı bir mod
+   seçip panele geçtikçe gösterilir (applySelectedWorkMode → başlatır). */
+let splashLoaderStarted = false;
+function startSplashLoaderOnce() {
+    if (splashLoaderStarted) return;
+    splashLoaderStarted = true;
+    /* Mod seçimi yapıldı: splash'i görünür kılıp animasyonu başlat. */
+    const splash = document.getElementById('splash-screen');
+    if (splash && !splash.classList.contains('hidden')) splash.style.opacity = '';
+    startSplashLoader();
 }
 
 function generateSplashBeams() {
@@ -1539,7 +1552,9 @@ function bootAfterUnlock() {
         return;
     }
 
-    startSplashLoader();
+    /* LOADER TAŞINDI: startSplashLoader artık mod seçiminden sonra
+       (applySelectedWorkMode → startSplashLoaderOnce) çalışır. */
+
     startLiveClock();
     initNumberFields();
     startCountdown();
@@ -2572,8 +2587,16 @@ function wmMigrateVaultToPublicFromSession() {
 /* zkBoot'un ÇALIŞMA MODU kapısı: public modda kilit ekranını atlar.
    · Kasa yok → şifresiz depoyu cache'e doldur, parolasız aç.
    · Kasa var + otomatik açma → bir kez şifresiz depoya göç et, parolasız aç.
-   · Kasa var, otomatik açma yok → eski parola ekranı (legacy yol). */
+   · Kasa var, otomatik açma yok → eski parola ekranı (legacy yol).
+   YÜKLEME ANİMASYONU NOTU: splash artık mod seçiminden sonra çalışır. Bu
+   kapı çözülürken açılış ekranı GİZLİ tutulur; kullanıcıya önce Public/
+   Private kartları görünür. Parola isteyen legacy yolda ekran yine gizlidir
+   (zkShowLock kendi cam yüzeyini gösterir); startSplashLoaderOnce() yalnızca
+   applySelectedWorkMode ile tetiklenir. */
 function zkBootWorkModeGate() {
+    /* Splash, mod seçilene dek görünmez. */
+    const splashEarly = document.getElementById('splash-screen');
+    if (splashEarly && !splashEarly.classList.contains('hidden')) splashEarly.style.opacity = '0';
     if (!wmHasEncryptedVault()) {
         zkPlainCache = wmFillPublicCache();
         return Promise.resolve();
@@ -3616,8 +3639,14 @@ function applyDynamicHeaderTitles() {
 
 function exportDataJSON() {
     /* DASH_LAYOUT_KEY kayıtlıysa onu da yedeğe koy: panel düzeni böylece
-       "Yedek İndir" dosyasıyla başka tarayıcıya da taşınır. */
-    const backupObj = { jobs, activeJobIds, notes, tasks, files, quickNotes, stickyNotes, weeklyGoal, settings, customHeaderTitles, dashLayout: loadDashLayout(), exportDate: new Date().toISOString() };
+       "Yedek İndir" dosyasıyla başka tarayıcıya da taşınır. Profil bilgileri
+       (Ad Soyad, Rol, Birim, Yetki) da yedeğe dahildir. */
+    let profilNesnesi = null;
+    try {
+        const ham = JSON.parse(_zkRead(PROFILE_SETTINGS_KEY));
+        if (ham && typeof ham === 'object') profilNesnesi = ham;
+    } catch (e) { profilNesnesi = null; }
+    const backupObj = { jobs, activeJobIds, notes, tasks, files, quickNotes, stickyNotes, weeklyGoal, settings, customHeaderTitles, dashLayout: loadDashLayout(), profile: profilNesnesi || getProfileSettings(), exportDate: new Date().toISOString() };
     _zkDownloadJSON(backupObj, 'EtutProje_Yedek_' + new Date().toISOString().split('T')[0] + '.json');
 }
 
@@ -3626,7 +3655,7 @@ function exportDataJSON() {
    uzantısıyla indirilir. Parolayı bilmeyen biri dosyayı açamaz. */
 async function exportEncryptedJSON() {
     if (!zkRootBits) { lockApp(); return; }
-    const backupObj = { jobs, activeJobIds, notes, noteTopics, tasks, files, quickNotes, stickyNotes, weeklyGoal, settings, customHeaderTitles, dashLayout: loadDashLayout(), exportDate: new Date().toISOString() };
+    const backupObj = { jobs, activeJobIds, notes, noteTopics, tasks, files, quickNotes, stickyNotes, weeklyGoal, settings, customHeaderTitles, dashLayout: loadDashLayout(), profile: getProfileSettings(), exportDate: new Date().toISOString() };
     const plain = JSON.stringify({ type: 'yaser-v10-encrypted-backup', payload: backupObj }, null, 2);
     const cipher = await zkEncryptString(zkRootBits, plain, ZK_EXPORT_INFO);
     /* vaultSalt OLMAZSA dosya başka cihazda açılamaz: anahtar türetimi bu
@@ -3722,6 +3751,13 @@ function _applyBackupObject(data) {
     if (data.stickyNotes) stickyNotes = data.stickyNotes;
     if (data.weeklyGoal) weeklyGoal = data.weeklyGoal;
     if (data.customHeaderTitles) customHeaderTitles = data.customHeaderTitles;
+    /* PROFİL BİLGİLERİ: yedekte varsa geri yüklenir (Ad Soyad, Rol, Birim,
+       Yetki). Eski yedeklerde bu anahtar yoksa mevcut profil korunur. */
+    if (data.profile && typeof data.profile === 'object') {
+        try {
+            _zkWrite(PROFILE_SETTINGS_KEY, JSON.stringify(data.profile));
+        } catch (err) { /* kota/kilit: yoksay */ }
+    }
     /* Panel düzeni de yedekte taşınıyorsa geri yükle ve ekrana uygula.
        sanitizeDashLayout geçersiz veriyi null döndürür → bozuk bir dosya
        mevcut düzeni bozmaz. */
@@ -3746,6 +3782,7 @@ function _applyBackupObject(data) {
 
     saveAllData();
     applyDynamicHeaderTitles();
+    if (typeof applyProfileToDom === 'function') applyProfileToDom();
     renderCurrentView();
 }
 
@@ -8074,6 +8111,21 @@ function renderTickerBar() {
 
     const importantTasks = tasks.filter(t => !t.completed && (t.emoji === '⚡' || t.emoji === '⭐'));
 
+    /* MÜELLİF GÜNCELLEMELERİ: yalnızca dış form (?mode=guest_form) üzerinden
+       gelen ve kaydedilen iş güncellemeleri bildirim düşürür. Liste, Private
+       girişte/güncellemede bulut GET yanıtındaki guestMessages alanından
+       beslenir (bkz. syncJobsFromCloud → updateGuestMessages). Public modda
+       ağ isteği yapılmaz; son bilinen liste gösterilir. */
+    const gList = (typeof getGuestMessages === 'function') ? getGuestMessages() : [];
+    const gRows = gList.map(m => `
+        <div class="notif-item notif-item-guest">
+            <span class="notif-item-emoji"><i class="fa-solid fa-user-pen" style="font-size:11px;"></i></span>
+            <div class="notif-item-body">
+                <span class="notif-item-date">${escapeHtml(m.at || '')}</span>
+                <span class="notif-item-text">${escapeHtml(m.text || '')}</span>
+            </div>
+        </div>`).join('');
+
     /* Kayan metin yerine düz liste: satırlar okunur, üstünden aşmaz. */
     const rows = importantTasks.length
         ? importantTasks.map(t => `
@@ -8092,11 +8144,31 @@ function renderTickerBar() {
             ${importantTasks.length ? `<span class="notif-count">${importantTasks.length}</span>` : ''}
         </div>
         <div class="notif-list">${rows}</div>
+        ${gList.length ? `
+        <div class="notif-head" style="margin-top:6px;">
+            <span class="notif-head-title"><i class="fa-solid fa-user-pen"></i> Müellif Güncellemeleri</span>
+            <span class="notif-count">${gList.length}</span>
+        </div>
+        <div class="notif-list">${gRows}</div>` : ''}
         <div class="notif-foot">Önemli ve acil işaretli görevleriniz</div>`;
 
     /* Kırmızı nokta yalnızca gerçekten bildirim varken görünür. */
     const dot = document.getElementById('notif-dot');
-    if (dot) dot.style.display = importantTasks.length ? 'block' : 'none';
+    if (dot) dot.style.display = (importantTasks.length || gList.length) ? 'block' : 'none';
+}
+
+/* GUEST İLETİ DEPOSU: bulut GET yanıtından gelen müellif güncelleme
+   bildirimleri RAM'de tutulur; renderTickerBar bunları gösterir. */
+let guestMessagesCache = [];
+function updateGuestMessages(list) {
+    if (!Array.isArray(list)) return;
+    guestMessagesCache = list.map(m => ({
+        text: (m && typeof m.text === 'string') ? m.text : '',
+        at: (m && typeof m.at === 'string') ? m.at : ''
+    })).filter(m => m.text);
+}
+function getGuestMessages() {
+    return guestMessagesCache;
 }
 
 /* Popover'ı aç/kapa. Dışarı tıklayınca ve Escape'te kapanır. */
@@ -9293,14 +9365,26 @@ function saveNote() {
 }
 function deleteNote(id) { pushUndoState('Not silme'); notes = notes.filter(n => String(n.id) !== String(id)); saveAllData(); renderNotes(); }
 
-function closeAllExcelFilterDropdowns() { document.querySelectorAll('.excel-filter-dropdown').forEach(d => d.classList.remove('active')); }
+function closeAllExcelFilterDropdowns() {
+    document.querySelectorAll('.excel-filter-dropdown').forEach(d => d.classList.remove('active'));
+    /* Açılır ok (chevron) durumu: menü kapanınca tüm piller eski hâline döner. */
+    document.querySelectorAll('#view-projects .th-filter-pill.filter-menu-open')
+        .forEach(p => p.classList.remove('filter-menu-open'));
+}
 
 function toggleExcelFilterMenu(e, columnKey) {
     e.stopPropagation();
     const targetDropdown = document.getElementById(`dropdown-filter-${columnKey}`);
     const isActive = targetDropdown.classList.contains('active');
     closeAllExcelFilterDropdowns();
-    if (!isActive) { populateExcelFilterOptions(columnKey); targetDropdown.classList.add('active'); }
+    if (!isActive) {
+        populateExcelFilterOptions(columnKey);
+        targetDropdown.classList.add('active');
+        /* Tıklanan pilin oku 180° döner: açık menü görsel olarak belli olur. */
+        const pil = e.currentTarget && e.currentTarget.closest
+            ? e.currentTarget.closest('.th-filter-pill') : null;
+        if (pil) pil.classList.add('filter-menu-open');
+    }
 }
 
 function populateExcelFilterOptions(columnKey) {
@@ -9345,13 +9429,24 @@ function populateExcelFilterOptions(columnKey) {
 
 function applyExcelFilter(columnKey, value) {
     if (!value) delete selectedExcelFilters[columnKey]; else selectedExcelFilters[columnKey] = value;
+    refreshExcelFilterPillStates();
     closeAllExcelFilterDropdowns(); renderProjectsTable(); renderSidebarTurSublist();
+}
+
+/* Filtre pill görsel durumları: aktif filtresi olan sütunun pili dolgulu vurguya geçer. */
+function refreshExcelFilterPillStates() {
+    document.querySelectorAll('#view-projects .th-filter-pill').forEach(pill => {
+        const onclk = pill.getAttribute('onclick') || '';
+        const m = onclk.match(/toggleExcelFilterMenu\(event,\s*'([^']+)'\)/);
+        if (!m) return;
+        pill.classList.toggle('filter-icon-active', Boolean(selectedExcelFilters[m[1]]));
+    });
 }
 
 function resetExcelFilters() {
     selectedExcelFilters = {};
     clearGlobalSearch();
-
+    refreshExcelFilterPillStates();
     renderProjectsTable();
     renderSidebarTurSublist();
 }
@@ -10227,6 +10322,27 @@ function removeNoteTopicColumn(topic) {
     else alert(message);
 }
 
+/* NOT AKORDİYONU: kartlarda varsayılan olarak yalnızca başlık + etiketler
+   görünür. Başlığa tıklayınca içerik açılır; daha önce açık olan başka bir
+   not varsa kendiliğinden kapanır (akıllı tek-açık kuralı). */
+function toggleNoteAccordion(ev, noteId) {
+    if (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+    }
+    const kart = document.querySelector(`.note-card-box[data-id="${noteId}"]`);
+    if (!kart) return;
+    const zatenAcik = kart.classList.contains('acc-open');
+    /* AKILLI KAPANMA: açık kalan diğer tüm notlar kapatılır. */
+    document.querySelectorAll('.note-card-box.acc-open').forEach(k => {
+        if (k !== kart) k.classList.remove('acc-open');
+    });
+    kart.classList.toggle('acc-open', !zatenAcik);
+}
+
+/* Konfeti/yıldız patlaması + akordiyon açılışı render sonrası tekrar edilmez;
+   akordiyon durumu render'da sıfırlanır (kartlar varsayılan kapalı doğar). */
+
 /* Tek bir terim için, kaynak metinde Türkçe harfleri de kapsayan bir
    regex üretir. Arama katmanı metni normalize EDİLMİŞ (ş->s) hâlde
    karşılaştırır; vurgulama iska kaynak metne uygulanır. Bu yüzden
@@ -10323,14 +10439,14 @@ function renderNotes() {
         const cards = topicNotes.map(n => {
             const accent = getNoteAccent(n.color);
             const isOldest = !!n.date && n.date === oldestDate;
-            return `<div class="note-card-box${isOldest ? ' is-oldest' : ''}" data-id="${n.id}" style="border-left:3.5px solid ${accent.hex};background:${accent.bg};--note-title-color:${accent.hex};">
+            return `<div class="note-card-box note-accordion${isOldest ? ' is-oldest' : ''}" data-id="${n.id}" style="border-left:3.5px solid ${accent.hex};background:${accent.bg};--note-title-color:${accent.hex};">
                 <div class="note-card-timeline" aria-hidden="true"><span class="note-card-timeline-dot"></span></div>
                 <div class="note-card-header-drag" draggable="true" title="Kartı panolar arasında veya sıralamak için sürükleyin">
                     <span style="font-size:11.5px;color:var(--txt-muted);font-weight:600;"><i class="fa-solid fa-grip-vertical" style="margin-right:4px;opacity:0.6;"></i>${escapeHtml(n.date || '-')}</span>
                     <span class="tag" style="background:rgba(139,92,246,0.2);color:var(--color-violet);font-size:10.5px;">${escapeHtml(topic)}</span>
                 </div>
-                <strong class="note-card-title">${highlightNoteTitle(n.title)}</strong>
-                <p class="note-card-body">${sanitizeNoteHtml(n.body)}</p>
+                <strong class="note-card-title" title="İçeriği açmak/kapatmak için tıklayın" onclick="toggleNoteAccordion(event, '${n.id}')"><i class="fa-solid fa-chevron-down note-acc-caret" aria-hidden="true"></i>${highlightNoteTitle(n.title)}</strong>
+                <div class="note-acc-body"><p class="note-card-body">${sanitizeNoteHtml(n.body)}</p></div>
                 <div style="margin-top:auto;display:flex;justify-content:flex-end;gap:4px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);">
                     <button class="btn-icon" title="Düzenle" onclick="openNoteModal('${n.id}')"><i class="fa-solid fa-pen"></i></button>
                     <button class="btn-icon delete" title="Sil" onclick="deleteNote('${n.id}')"><i class="fa-solid fa-trash-can"></i></button>
@@ -11216,10 +11332,120 @@ function toggleTaskStatus(id) {
     if (t) {
         pushUndoState('Görev durumu');
         t.completed = !t.completed;
+        if (t.completed) {
+            /* CONFETTI STARS: onay kutucuğu işaretlenince hafif yıldız patlaması. */
+            try { burstStarsAtTask(id); } catch (e) { /* efekt isteğe bağlıdır */ }
+        }
         saveAllData();
         renderDailyTasks();
         updateGlobalCounts();
     }
+}
+
+/* ==========================================================================
+   CONFETTI STARS — görev tamamlandı onay kutucuğu efekt motoru
+   --------------------------------------------------------------------------
+   Canvas tabanlı, tek paylaşımlı tuval; kutucuğun ekran konumundan hafif bir
+   yıldız patlaması üretir. prefers-reduced-motion'da hiçbir şey çizilmez.
+   ========================================================================== */
+let _starsFxCanvas = null;
+let _starsFxCtx = null;
+let _starsFxParts = [];
+let _starsFxRaf = null;
+
+function _starsFxEnsureCanvas() {
+    if (_starsFxCanvas && document.body.contains(_starsFxCanvas)) return _starsFxCanvas;
+    _starsFxCanvas = document.createElement('canvas');
+    _starsFxCanvas.id = 'stars-fx-canvas';
+    _starsFxCanvas.setAttribute('aria-hidden', 'true');
+    _starsFxCanvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:100700;';
+    document.body.appendChild(_starsFxCanvas);
+    _starsFxCtx = _starsFxCanvas.getContext('2d');
+    _starsFxResizeCanvas();
+    window.addEventListener('resize', _starsFxResizeCanvas);
+    return _starsFxCanvas;
+}
+function _starsFxResizeCanvas() {
+    if (!_starsFxCanvas) return;
+    _starsFxCanvas.width = window.innerWidth;
+    _starsFxCanvas.height = window.innerHeight;
+}
+
+function _starsFxDrawStar(ctx, x, y, r, spikes, rot, color, alpha) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.beginPath();
+    for (let i = 0; i < spikes * 2; i++) {
+        const radius = (i % 2 === 0) ? r : r * 0.45;
+        const ang = (i * Math.PI) / spikes;
+        const px = Math.cos(ang) * radius;
+        const py = Math.sin(ang) * radius;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.restore();
+}
+
+function starsBurstAt(clientX, clientY) {
+    /* Hareket azaltma tercihi olan kullanıcıda efekt tamamen kapatılır. */
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const canvas = _starsFxEnsureCanvas();
+    if (!canvas || !_starsFxCtx) return;
+    const renkler = ['#fbbf24', '#f59e0b', '#3b82f6', '#22c55e', '#a78bfa', '#f472b6'];
+    for (let i = 0; i < 14; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const hiz = 90 + Math.random() * 150;
+        _starsFxParts.push({
+            x: clientX,
+            y: clientY,
+            vx: Math.cos(ang) * hiz,
+            vy: Math.sin(ang) * hiz - 60,
+            r: 2.2 + Math.random() * 3.2,
+            spikes: 4 + (Math.random() < 0.5 ? 1 : 0),
+            rot: Math.random() * Math.PI,
+            vr: (Math.random() - 0.5) * 6,
+            color: renkler[Math.floor(Math.random() * renkler.length)],
+            omur: 0,
+            maxOmur: 620 + Math.random() * 320
+        });
+    }
+    if (_starsFxRaf) return;
+    let sonT = performance.now();
+    const adim = (t) => {
+        const dt = Math.min(48, t - sonT);
+        sonT = t;
+        _starsFxCtx.clearRect(0, 0, _starsFxCanvas.width, _starsFxCanvas.height);
+        _starsFxParts = _starsFxParts.filter(p => p.omur < p.maxOmur);
+        for (const p of _starsFxParts) {
+            p.omur += dt;
+            p.vy += 320 * (dt / 1000);           /* hafif yerçekimi */
+            p.vx *= 0.985;                        /* hava sürtünmesi */
+            p.x += p.vx * (dt / 1000);
+            p.y += p.vy * (dt / 1000);
+            p.rot += p.vr * (dt / 1000);
+            const alfa = Math.max(0, 1 - p.omur / p.maxOmur);
+            _starsFxDrawStar(_starsFxCtx, p.x, p.y, p.r, p.spikes, p.rot, p.color, alfa);
+        }
+        if (_starsFxParts.length) {
+            _starsFxRaf = requestAnimationFrame(adim);
+        } else {
+            _starsFxRaf = null;
+            _starsFxCtx.clearRect(0, 0, _starsFxCanvas.width, _starsFxCanvas.height);
+        }
+    };
+    _starsFxRaf = requestAnimationFrame(adim);
+}
+
+/* Görev kutucuğunun ekran koordinatını bulur ve patlamayı orada tetikler. */
+function burstStarsAtTask(taskId) {
+    const kutu = document.querySelector(`.todo-item[data-task-id="${taskId}"] .todo-checkbox`);
+    if (!kutu) return;
+    const dikd = kutu.getBoundingClientRect();
+    starsBurstAt(dikd.left + dikd.width / 2, dikd.top + dikd.height / 2);
 }
 
 function deleteTask(id) {
@@ -11947,19 +12173,21 @@ function updateWorkModeBadge() {
 function showWorkModeModal() {
     const modal = document.getElementById('work-mode-modal');
     if (!modal) return;
-    /* Mevcut mod işaretlenir; parola alanı yalnızca Private için açılır. */
+    /* KİNETİK KARŞILAMA BAŞLIĞI: her açılışta harfler yeniden kurulur. */
+    if (typeof initKineticWelcomeTitle === 'function') initKineticWelcomeTitle();
+    /* VARSAYILAN GÖRÜNÜM: kartlar açık, şifre/TOTP alanı GİZLİ. Yalnızca
+       Private kartına tıklanınca (selectWorkModeOption) giriş alanı belirir. */
     modal.querySelectorAll('.wm-option').forEach(opt => {
-        opt.classList.toggle('selected', opt.dataset.mode === workMode);
+        opt.classList.toggle('selected', opt.dataset.mode === 'public');
     });
     const pwWrap = document.getElementById('wm-password-wrap');
-    if (pwWrap) pwWrap.style.display = isWorkModePrivate() ? 'flex' : 'none';
+    if (pwWrap) pwWrap.style.display = 'none';
     const pwInput = document.getElementById('wm-password-input');
     const err = document.getElementById('wm-error');
     if (err) { err.textContent = ''; err.style.display = 'none'; }
     if (pwInput) pwInput.value = '';
     modal.classList.add('active');
     document.body.style.overflow = 'hidden';
-    setTimeout(() => { if (pwInput && isWorkModePrivate()) pwInput.focus(); }, 80);
 }
 
 function closeWorkModeModal() {
@@ -11972,9 +12200,85 @@ function closeWorkModeModal() {
 
 /* Rozet tıklanınca mod seçim modalı açılır/kapatılır. */
 function toggleWorkModeModal() {
+    /* PRIVATE ÇIKIŞ ONAYI: Bulut Bağlı (Private) rozetine tıklandığında
+       doğrudan oturum kapatma YERİNE onay penceresi açılır. */
+    if (isWorkModePrivate()) { confirmPrivateLogout(); return; }
     const modal = document.getElementById('work-mode-modal');
     if (modal && modal.classList.contains('active')) closeWorkModeModal();
     else showWorkModeModal();
+}
+
+/* KİNETİK TİPOGRAFİ: "PROJE YÖNETİM PANELİNE HOŞ GELDİNİZ" başlığını kelime
+   + harf span'lerine böler; fare harf üzerindeyken dalga efektinde komşu
+   harfler de hafifçe kalkar (Magic UI Kinetic Text ruhunda). */
+const WM_WELCOME_TEXT = 'PROJE YÖNETİM PANELİNE HOŞ GELDİNİZ';
+let wmKineticCleanup = null;
+function initKineticWelcomeTitle() {
+    const title = document.getElementById('wm-welcome-title');
+    if (!title) return;
+    if (typeof wmKineticCleanup === 'function') { wmKineticCleanup(); wmKineticCleanup = null; }
+    const words = WM_WELCOME_TEXT.split(' ');
+    title.innerHTML = words.map(w =>
+        `<span class="wm-kin-word">${w.split('').map(ch => `<span class="wm-kin-ch">${ch}</span>`).join('')}</span>`
+    ).join('');
+    const chars = Array.from(title.querySelectorAll('.wm-kin-ch'));
+    const onEnter = (ev) => {
+        const idx = chars.indexOf(ev.currentTarget);
+        chars.forEach((c, i) => {
+            const dist = Math.abs(i - idx);
+            c.classList.toggle('wm-kin-up', dist === 0 || dist === 1);
+        });
+    };
+    const onLeave = () => { chars.forEach(c => c.classList.remove('wm-kin-up')); };
+    chars.forEach(c => {
+        c.addEventListener('mouseenter', onEnter);
+        c.addEventListener('mouseleave', onLeave);
+    });
+    wmKineticCleanup = () => {
+        chars.forEach(c => {
+            c.removeEventListener('mouseenter', onEnter);
+            c.removeEventListener('mouseleave', onLeave);
+        });
+    };
+}
+
+/* PRIVATE ÇIKIŞ ONAY PENCERESİ: şık cam modal; Evet → son güncellemeler
+   buluta kaydedilir, ardından sıfır-artık temizlik mantığıyla Public'e geçilir
+   (enterPublicWorkMode(true) zaten purge sürecini tetikler). Hayır → pencere
+   kapanır, Private çalışma sürer. */
+function confirmPrivateLogout() {
+    const eski = document.getElementById('wm-logout-confirm');
+    if (eski) eski.remove();
+    const ov = document.createElement('div');
+    ov.id = 'wm-logout-confirm';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:100600;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(8,12,24,0.55);backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%);';
+    ov.innerHTML = `
+        <div class="modal-card" style="max-width:400px;width:100%;padding:26px 24px;text-align:center;">
+            <div style="width:52px;height:52px;margin:0 auto 14px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:rgba(16,185,129,0.14);color:var(--color-emerald,#10b981);font-size:20px;"><i class="fa-solid fa-cloud-arrow-down"></i></div>
+            <h3 style="font-family:var(--font-family-heading);font-size:15.5px;font-weight:800;color:var(--txt-main);margin:0 0 8px;">Private hesaptan çıkış yapılsın mı?</h3>
+            <p style="font-size:12.2px;line-height:1.6;color:var(--txt-muted);margin:0 0 18px;">Yapılan son güncellemeler önce buluta kaydedilecek, ardından yerel izler güvenli biçimde temizlenerek Public moda dönülecek.</p>
+            <div style="display:flex;gap:10px;justify-content:center;">
+                <button type="button" id="wm-logout-no" class="btn btn-secondary" style="min-width:96px;"><i class="fa-solid fa-xmark"></i> Hayır</button>
+                <button type="button" id="wm-logout-yes" class="btn btn-primary" style="min-width:96px;"><i class="fa-solid fa-check"></i> Evet</button>
+            </div>
+        </div>`;
+    document.body.appendChild(ov);
+    const kapat = () => { const el = document.getElementById('wm-logout-confirm'); if (el) el.remove(); };
+    ov.querySelector('#wm-logout-no').addEventListener('click', kapat);
+    ov.addEventListener('click', (e) => { if (e.target === ov) kapat(); });
+    const escDinle = (e) => { if (e.key === 'Escape') { kapat(); document.removeEventListener('keydown', escDinle); } };
+    document.addEventListener('keydown', escDinle);
+    ov.querySelector('#wm-logout-yes').addEventListener('click', () => {
+        /* 1) Son güncellemeleri buluta yaz (sessiz; hata olursa akış durmaz). */
+        const gonderi = (typeof syncJobsToCloud === 'function') ? syncJobsToCloud('private-logout') : Promise.resolve(false);
+        Promise.resolve(gonderi).catch(() => {}).then(() => {
+            /* 2) Sıfır-artık temizlik + Public'e dönüş (purge zinciri enterPublicWorkMode
+               içinde çalışır: yerel izler silinir, bulut köprüsü kapatılır). */
+            enterPublicWorkMode(true);
+            kapat();
+            if (typeof showToast === 'function') showToast('Private oturum kapatıldı; son güncellemeler buluta kaydedildi.', 'success');
+        });
+    });
 }
 
 /* Modal içindeki mod kartına tıklanınca: seçim işaretlenir, parola alanı
@@ -12051,6 +12355,8 @@ function applySelectedWorkMode() {
     const mode = (selectedOpt && selectedOpt.dataset.mode) || workMode;
 
     if (mode === 'public') {
+        /* Yükleme animasyonu ARTIK mod seçiminden SONRA başlar. */
+        startSplashLoaderOnce();
         enterPublicWorkMode(true);
         closeWorkModeModal();
         return;
@@ -12059,7 +12365,7 @@ function applySelectedWorkMode() {
     const pwInput = document.getElementById('wm-password-input');
     const password = (pwInput && pwInput.value) || '';
     if (!password) {
-        showWorkModeError('Lütfen Master Parola girin.');
+        showWorkModeError('Lütfen Master Parola veya 6 haneli kodunuzu girin.');
         if (pwInput) pwInput.focus();
         return;
     }
@@ -12070,6 +12376,8 @@ function applySelectedWorkMode() {
     verifyMasterPasswordWithCloud(password)
         .then(() => {
             workModeMasterPassword = password;   /* yalnızca RAM'de tutulur */
+            /* Yükleme animasyonu Private girişten de SONRA başlar. */
+            startSplashLoaderOnce();
             return enterPrivateWorkMode();
         })
         .then(() => { closeWorkModeModal(); })
@@ -12539,6 +12847,42 @@ function loadGuestJobFromCloud(jobId) {
         });
 }
 
+/* --- DIŞ FORM DEĞİŞİKLİK DENETİMİ ---------------------------------------
+   Bildirim gürültüsünü keser: dış form (müellif linki) açıldığı andaki alan
+   değerleri RAM'de saklanır; "Buluta Kaydet"e basıldığında yalnızca GERÇEKTEN
+   değişen alanlar tespit edilir. Hiçbir alan değişmediyse yönetici panelindeki
+   sağ odak kutusuna boşa bildirim düşmez. Alanlar id ile eşlendiğinden
+   (gizli alanlar dahil) şema değişse bile denetim çalışır. */
+let guestFormBaselineMap = null;
+
+function guestFormSnapshot() {
+    const harita = {};
+    const modal = document.getElementById('job-modal');
+    if (!modal) return harita;
+    modal.querySelectorAll('input, select, textarea').forEach(el => {
+        if (!el.id) return;
+        harita[el.id] = (el.type === 'checkbox') ? (el.checked ? '1' : '0') : String(el.value || '').trim();
+    });
+    return harita;
+}
+
+/* Form açılışındaki anlık görüntüyle karşılaştırır; değişen alan id'lerini döner. */
+function guestFormChangedFields(onceki) {
+    const simdi = guestFormSnapshot();
+    if (!onceki) return Object.keys(simdi);
+    return Object.keys(simdi).filter(k => simdi[k] !== onceki[k]);
+}
+
+/* Bildirim metninde teknik id yerine okunur etiket: alanın kendi form
+   grubundaki label metni kullanılır (yoksa id'ye düşer). */
+function guestFieldLabel(id) {
+    const el = document.getElementById(id);
+    const grup = (el && el.closest) ? el.closest('.form-group') : null;
+    const etiket = grup ? grup.querySelector('label') : null;
+    const metin = etiket ? String(etiket.textContent || '') : '';
+    return metin.replace(/[:*]/g, '').replace(/\s+/g, ' ').trim() || id;
+}
+
 /* Guest form doldurma: openJobModal ile aynı alan haritası, ama veri
    kaynağı buluttan gelen TEK iş nesnesi. */
 function openJobModalForGuest(job) {
@@ -12593,6 +12937,10 @@ function openJobModalForGuest(job) {
 
     /* Başlangıç/teslim alanlarının görünürlüğü aşamaya bağlıdır. */
     if (typeof updateDeadlineFieldsVisibility === 'function') updateDeadlineFieldsVisibility();
+
+    /* DEĞİŞİKLİK BAŞLANGICI: formun açılış hâli burada dondurulur; kaydet
+       sırasında yapılan karşılaştırmanın referansı budur. */
+    guestFormBaselineMap = guestFormSnapshot();
 }
 
 /* Guest Kaydet: formu saveJob ile aynı şemada toparlar, LocalStorage'a
@@ -12603,6 +12951,19 @@ function saveGuestJobToCloud() {
         showGuestBlockingScreen('Hata', 'İş kimliği bulunamadı, kayıt gönderilemedi.', 'error');
         return;
     }
+    /* BİLDİRİM MESAJI: kayıt buluta ulaştığında yönetici panelinin sağ odak
+       bildirim kutusuna düşecek profesyonel ileti burada kurulur. */
+    const simdi = new Date();
+    const tarihSaat = simdi.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' +
+                      simdi.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+    /* DEĞİŞİKLİK DENETİMİ: yalnızca gerçekten düzenlenen alanlar bulunur.
+       Boş kayıt bildirim üretmez; metin değişen alanları adlarıyla anar. */
+    const degisenAlanlar = guestFormChangedFields(guestFormBaselineMap);
+    const degisti = degisenAlanlar.length > 0;
+    const isTanimi = document.getElementById('form-is-tanimi').value;
+    const ozet = degisenAlanlar.slice(0, 3).map(guestFieldLabel).join(', ')
+        + (degisenAlanlar.length > 3 ? ' ve ' + (degisenAlanlar.length - 3) + ' alan daha' : '');
+    const bildirimMetni = '[' + tarihSaat + '] — ' + isTanimi + ' kaydında ' + (ozet || 'çeşitli alanlar') + ' güncellendi.';
 
     /* saveJob ile birebir aynı alan şeması (yaser_v10_jobs düzeni korunur). */
     const data = {
@@ -12651,7 +13012,7 @@ function saveGuestJobToCloud() {
     fetch(CLOUD_API_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job: data })
+        body: JSON.stringify({ job: data, guestMessage: degisti ? bildirimMetni : '', guestMessageAt: data.guest_updated_at })
     })
         .then(r => {
             if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -12659,8 +13020,14 @@ function saveGuestJobToCloud() {
         })
         .then(() => {
             /* Cam efektli onay ekranı + form kilidi. */
-            showGuestBlockingScreen('Kayıt başarıyla iletildi, teşekkürler.', 'Girdiğiniz bilgiler yöneticiye ulaştı. Bu sayfayı artık kapatabilirsiniz.', 'success');
+            if (degisti) {
+                showGuestBlockingScreen('Kayıt başarıyla iletildi, teşekkürler.', 'Güncellediğiniz bilgiler yöneticiye ulaştı. Bu sayfayı artık kapatabilirsiniz.', 'success');
+            } else {
+                showGuestBlockingScreen('Kayıt iletildi — değişiklik yok.', 'Formda bir değişiklik yapılmadı; yöneticiye boşa bildirim gönderilmedi. Bu sayfayı kapatabilirsiniz.', 'success');
+            }
             lockGuestFormAfterSave();
+            /* Bir sonraki karşılaştırmanın referansı güncellenir. */
+            guestFormBaselineMap = guestFormSnapshot();
         })
         .catch(err => {
             if (typeof showToast === 'function') showToast('Kayıt gönderilemedi: ' + (err && err.message ? err.message : 'bağlantı hatası'), 'error');
@@ -12771,12 +13138,18 @@ function parseCloudPayload(payload) {
         weeklyGoal: (payload && payload.weeklyGoal && typeof payload.weeklyGoal === 'object') ? payload.weeklyGoal : null,
         settings: (payload && payload.settings && typeof payload.settings === 'object') ? payload.settings : null,
         headerTitles: (payload && payload.headerTitles && typeof payload.headerTitles === 'object') ? payload.headerTitles : null,
-        customListColumns: (payload && Array.isArray(payload.customListColumns)) ? payload.customListColumns : null
+        customListColumns: (payload && Array.isArray(payload.customListColumns)) ? payload.customListColumns : null,
+        profile: (payload && payload.profile && typeof payload.profile === 'object') ? payload.profile : null
     };
 }
 
 /* Tam paket gövdesi: yedek dosyasındaki tüm anahtarlar buluta gider. */
 function buildCloudPayload() {
+    let profilNesnesi = null;
+    try {
+        const ham = JSON.parse(_zkRead(PROFILE_SETTINGS_KEY));
+        if (ham && typeof ham === 'object') profilNesnesi = ham;
+    } catch (e) { profilNesnesi = null; }
     return {
         bundle: true,
         jobs: Array.isArray(jobs) ? jobs : [],
@@ -12790,7 +13163,8 @@ function buildCloudPayload() {
         weeklyGoal: (weeklyGoal && typeof weeklyGoal === 'object') ? weeklyGoal : {},
         settings: (settings && typeof settings === 'object') ? settings : {},
         headerTitles: (customHeaderTitles && typeof customHeaderTitles === 'object') ? customHeaderTitles : {},
-        customListColumns: Array.isArray(customListColumns) ? customListColumns : []
+        customListColumns: Array.isArray(customListColumns) ? customListColumns : [],
+        profile: profilNesnesi || getProfileSettings()
     };
 }
 
@@ -12889,6 +13263,13 @@ function applyCloudBundleToModules(p) {
     if (p.settings !== null) { settings = p.settings; degisen++; }
     if (p.headerTitles !== null) { customHeaderTitles = p.headerTitles; degisen++; }
     if (p.customListColumns !== null) { customListColumns = p.customListColumns; degisen++; }
+    if (p.profile !== null && typeof p.profile === 'object') {
+        try {
+            _zkWrite(PROFILE_SETTINGS_KEY, JSON.stringify(p.profile));
+        } catch (err) { /* kota/kilit: yoksay */ }
+        if (typeof applyProfileToDom === 'function') applyProfileToDom();
+        degisen++;
+    }
     return degisen;
 }
 
@@ -12917,6 +13298,10 @@ function syncJobsFromCloud(showToastOnMerge, secureBoot) {
         .then(p => {
             const res = mergeCloudJobsIntoLocal(p.jobs, secureBoot === true ? false : true);
             applyCloudBundleToModules(p);
+            /* MÜELLİF BİLDİRİMLERİ: bulut yanıtındaki guestMessages ile
+               bildirim deposu tazelenir; sağ odak kutusu yeniden çizilir. */
+            if (typeof updateGuestMessages === 'function') updateGuestMessages(p.guestMessages);
+            if (typeof renderTickerBar === 'function') renderTickerBar();
             try { localStorage.setItem(CLOUD_SYNC_STORAGE_FLAG, String(Date.now())); } catch (e) {}
             if ((res.added || res.updated || res.removed)) {
                 if (typeof renderCurrentView === 'function') renderCurrentView();
