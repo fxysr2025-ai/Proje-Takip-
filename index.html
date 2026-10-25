@@ -50,7 +50,7 @@
 
     <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
+<body class="wm-gate-active">
 
     <!-- BİLDİRİM POPOVER'İ (Görev 2)
          Kasıtlı olarak <body> seviyesinde, header'ın DIŞINDA durur.
@@ -62,7 +62,7 @@
     <div class="notif-popover" id="notif-popover" role="dialog" aria-label="Bugünkü Odak İletileri"></div>
 
     <!-- AÇILIŞ EKRANI -->
-    <div id="splash-screen">
+    <div id="splash-screen" class="hidden">
         <div class="splash-corner tl"></div>
         <div class="splash-corner tr"></div>
         <div class="splash-corner bl"></div>
@@ -780,31 +780,31 @@
                                         <!-- SÜTUN BAŞLIĞI + FİLTRE: örnekteki (Brand / Price / Category)
                                              dropdown diline uyar — metin + sağda açılır ok (chevron).
                                              Aktif filtre varsa pill dolgulu vurgu kazanır ve ok döner. -->
-                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'section')"><span class="dynamic-col-projeTuru th-two-line">KATEGORİ<br>/ PROTOKOL</span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'section')"><span class="th-filter-label"><span class="dynamic-col-projeTuru th-two-line">KATEGORİ<br>/ PROTOKOL</span></span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-section"></div>
                                     </th>
                                     <th>
-                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'tur')"><span class="dynamic-col-tur">TÜR</span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'tur')"><span class="th-filter-label"><span class="dynamic-col-tur">TÜR</span></span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-tur"></div>
                                     </th>
                                     <th>
-                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'il')">İL / İLÇE <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'il')"><span class="th-filter-label">İL / İLÇE</span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-il"></div>
                                     </th>
                                     <th>
-                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'is_tanimi')">İŞ TANIMI <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'is_tanimi')"><span class="th-filter-label">İŞ TANIMI</span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-is_tanimi"></div>
                                     </th>
                                     <th>
-                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'proje')"><span class="dynamic-col-projeMusaviri">PROJE MÜŞAVİRİ</span> /<br><span class="dynamic-col-altYuklenici">ALT YÜKLENİCİ</span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'proje')"><span class="th-filter-label"><span class="dynamic-col-projeMusaviri">PROJE MÜŞAVİRİ</span> /<br><span class="dynamic-col-altYuklenici">ALT YÜKLENİCİ</span></span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-proje"></div>
                                     </th>
                                     <th>
-                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'asama')"><span class="dynamic-col-asama">AŞAMA</span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'asama')"><span class="th-filter-label"><span class="dynamic-col-asama">AŞAMA</span></span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-asama"></div>
                                     </th>
                                     <th>
-                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'last_timeline')">SON TIMELINE NOTU <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
+                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'last_timeline')"><span class="th-filter-label">SON TIMELINE NOTU</span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-last_timeline"></div>
                                     </th>
                                     <th style="text-align: center;">İŞLEMLER</th>
@@ -1833,6 +1833,7 @@
     <div class="modal-card wm-modal-card">
         <div class="modal-header wm-modal-header">
             <div class="wm-modal-title-box">
+                <div class="wm-welcome-eyebrow">ETÜT PROJE YÖNETİM SİSTEMİ</div>
                 <h2 class="wm-welcome-title" id="wm-welcome-title" aria-label="PROJE YÖNETİM PANELİNE HOŞ GELDİNİZ"></h2>
             </div>
             <button class="wm-modal-close" onclick="closeWorkModeModal()" title="Kapat" aria-label="Kapat"><i class="fa-solid fa-xmark"></i></button>
@@ -1872,33 +1873,98 @@
 </div>
 <style id="work-mode-modal-styles">
     #work-mode-modal { z-index: 100500; }
+    /* AÇILIŞ KAPISI: mod seçilene kadar dashboard TAMAMEN gizli kalır.
+       visibility (display değil) seçildi: harita/tablo ölçüleri gizliyken
+       de alınmaya devam eder, arka planda yapılan render bozulmaz. */
+    body.wm-gate-active .app-layout { visibility: hidden; }
     #work-mode-modal .wm-modal-card { max-width: 560px; width: 100%; }
     .wm-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-    /* KİNETİK TİPOGRAFİ BAŞLIĞI: her kelime ayrı span; hover'da harfler
-       dalga gibi hafifçe yükselip parlar (Magic UI "Kinetic Text" ruhunda).
-       prefers-reduced-motion'da tüm hareket kapanır. */
-    .wm-welcome-title {
-        font-family: var(--font-family-heading);
-        font-size: clamp(17px, 2.6vw, 21px);
-        font-weight: 900;
-        letter-spacing: 0.6px;
-        color: var(--txt-main);
-        margin: 0 0 10px;
-        line-height: 1.25;
-        text-transform: uppercase;
+    /* PREMIUM KARŞILAMA BAŞLIĞI
+       İlk intiba: başlığın tamamına yayılan TEK sürekli gradient dolgu
+       (background-clip:text), yumuşak neon hale, harf harf yükselerek gelen
+       giriş animasyonu ve soldan çizilen neon alt ray. Kinetik hover dalgası
+       (JS: wm-kin-up) korunur; harf artık dolgu rengiyle parlar. */
+    .wm-modal-title-box { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .wm-welcome-eyebrow {
+        display: inline-flex; align-items: center; gap: 7px;
+        font-family: var(--font-family-hacker);
+        font-size: 9.2px; font-weight: 700; letter-spacing: 3.2px;
+        text-transform: uppercase; color: var(--txt-muted);
+        animation: wmEyebrowIn 0.55s ease 0.06s both;
     }
-    .wm-welcome-title .wm-kin-word { display: inline-block; white-space: nowrap; margin-right: 0.32em; }
+    .wm-welcome-eyebrow::before {
+        content: ''; width: 6px; height: 6px; border-radius: 50%;
+        background: var(--color-cyan, #06b6d4);
+        box-shadow: 0 0 9px 2px rgba(6, 182, 212, 0.7);
+        animation: wmEyebrowPulse 2.6s ease-in-out infinite;
+    }
+    .wm-welcome-title {
+        position: relative;
+        font-family: var(--font-family-heading);
+        font-size: clamp(18px, 2.8vw, 23px);
+        font-weight: 900;
+        letter-spacing: 1.1px;
+        line-height: 1.22;
+        text-transform: uppercase;
+        margin: 0;
+        padding-bottom: 11px;
+        background-image: linear-gradient(100deg, #60a5fa 0%, #a78bfa 26%, #22d3ee 50%, #818cf8 74%, #60a5fa 100%);
+        background-size: 260% 100%;
+        background-position: 0% 50%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        -webkit-text-fill-color: transparent;
+        filter: drop-shadow(0 0 15px rgba(59, 130, 246, 0.34));
+        animation: wmTitleShimmer 7.5s ease-in-out infinite;
+    }
+    .wm-welcome-title::after {
+        content: ''; position: absolute; left: 0; bottom: 0;
+        height: 2px; width: 100%; border-radius: 2px;
+        background: linear-gradient(90deg, rgba(96, 165, 250, 0.95) 0%, rgba(34, 211, 238, 0.85) 45%, rgba(167, 139, 250, 0.12) 100%);
+        box-shadow: 0 0 12px -2px rgba(34, 211, 238, 0.6);
+        transform: scaleX(0); transform-origin: left center;
+        animation: wmRuleDraw 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.2s forwards;
+    }
+    .wm-welcome-title .wm-kin-word { display: inline-block; white-space: nowrap; margin-right: 0.34em; }
     .wm-welcome-title .wm-kin-word:last-child { margin-right: 0; }
     .wm-welcome-title .wm-kin-ch {
         display: inline-block;
-        transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.28s ease, text-shadow 0.28s ease;
         will-change: transform;
+        transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), -webkit-text-fill-color 0.3s ease, filter 0.3s ease;
+        animation: wmCharIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) backwards;
     }
-    .wm-welcome-title:hover .wm-kin-ch,
-    .wm-welcome-title .wm-kin-word:hover .wm-kin-ch { color: var(--color-primary); }
-    .wm-welcome-title .wm-kin-word:hover .wm-kin-ch { text-shadow: 0 0 14px rgba(59, 130, 246, 0.45); }
-    .wm-welcome-title .wm-kin-ch.wm-kin-up { transform: translateY(-5px) rotate(-2.5deg) scale(1.07); }
+    .wm-welcome-title .wm-kin-ch.wm-kin-up {
+        transform: translateY(-6px) rotate(-3deg) scale(1.09);
+        -webkit-text-fill-color: #dbeafe;
+        filter: drop-shadow(0 0 10px rgba(147, 197, 253, 0.95));
+    }
+    @keyframes wmCharIn {
+        from { opacity: 0; transform: translateY(15px) scale(0.84) rotate(5deg); filter: blur(7px); }
+        to   { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); filter: blur(0); }
+    }
+    @keyframes wmTitleShimmer {
+        0%, 100% { background-position: 0% 50%; }
+        50%      { background-position: 100% 50%; }
+    }
+    @keyframes wmRuleDraw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    @keyframes wmEyebrowIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+    @keyframes wmEyebrowPulse {
+        0%, 100% { opacity: 1; box-shadow: 0 0 9px 2px rgba(6, 182, 212, 0.7); }
+        50%      { opacity: 0.55; box-shadow: 0 0 4px 1px rgba(6, 182, 212, 0.45); }
+    }
+    [data-theme="light"] .wm-welcome-title {
+        background-image: linear-gradient(100deg, #2563eb 0%, #7c3aed 26%, #0891b2 50%, #4f46e5 74%, #2563eb 100%);
+        filter: drop-shadow(0 0 12px rgba(37, 99, 235, 0.22));
+    }
+    [data-theme="light"] .wm-welcome-title .wm-kin-ch.wm-kin-up { -webkit-text-fill-color: #1d4ed8; }
     @media (prefers-reduced-motion: reduce) {
+        .wm-welcome-title,
+        .wm-welcome-title .wm-kin-ch,
+        .wm-welcome-title::after,
+        .wm-welcome-eyebrow,
+        .wm-welcome-eyebrow::before { animation: none; }
+        .wm-welcome-title::after { transform: scaleX(1); }
         .wm-welcome-title .wm-kin-ch { transition: none; }
         .wm-welcome-title .wm-kin-ch.wm-kin-up { transform: none; }
     }

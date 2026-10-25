@@ -3926,7 +3926,16 @@
             overflow: hidden;
             transition: grid-template-rows 0.28s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .note-acc-body > .note-card-body { min-height: 0; margin: 0; }
+        /* TEK GRID ÖĞESİ SÖZLEŞMESİ: sarmalayıcının içinde tek bir çocuk olmalı.
+           Sarmalayıcı .note-card-body bir <div> olmak zorunda; <p> olursa
+           sanitizeNoteHtml'in ürettiği blok etiketler (<p>/<div>/<h3>/<ul>)
+           dış paragrafı erken kapatır, grid'de ikinci bir örtük satır oluşur ve
+           0fr yalnızca ilk satırı kapatıp metin kapalıyken dışarı taşar.
+           Çocuğun kendisi de kırpmalı + min-height:0 olmalı ki içerik satırı
+           şişirmesin. */
+        .note-acc-body > .note-card-body { min-height: 0; margin: 0; overflow: hidden; }
+        /* Kapalı durumda boşluk/padding artığı kalmaz (tam kapanma). */
+        .note-card-box:not(.acc-open) .note-acc-body { padding: 0; margin: 0; }
         .note-card-box.acc-open .note-acc-body { grid-template-rows: 1fr; margin-top: 4px; }
         @media (prefers-reduced-motion: reduce) {
             .note-acc-body { transition: none; }
@@ -4232,23 +4241,38 @@
         .excel-filter-item:hover { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); }
         .excel-filter-item.active { font-weight: 700; color: var(--color-primary); background: rgba(59, 130, 246, 0.2); }
 
-        /* --- TÜM İŞLER TABLOSU: MINIMALIST AÇILIR FİLTRE BUTONLARI (pill) ---------
-           Tablo başlıklarındaki filtre tetikleyicileri artık `th` genelinde değil,
-           yalnızca pill buton üzerindedir. Pill: küçük, yuvarlak, minimalist;
-           aktif filtre varken dolgulu vurgu kazanır. */
+        /* --- TÜM İŞLER TABLOSU: AÇILIR FİLTRE KUTULARI (dropdown box) -------------
+           Hedef dil (Brand / Price / Category örneği): her başlık, arkası koyu/yarı
+           saydam dolgulu ve kenarları yuvarlatılmış belirgin birer açılır menü
+           butonudur. Metin SOLDA, açılır ok (chevron) en SAĞDA durur.
+           Tetikleyici yalnızca bu kutudur; `th` genelinde onclick yoktur, böylece
+           mevcut toggleExcelFilterMenu(event, 'anahtar') olayları değişmeden çalışır.
+           Aktif filtre varken dolgu vurgulanır, menü açıkken ok 180° döner. */
         .th-filter-pill {
-            display: inline-flex; align-items: center; gap: 5px;
-            padding: 2px 9px; border-radius: 999px; cursor: pointer;
-            border: 1px solid var(--surface-border);
-            background: var(--surface-glass, rgba(148, 163, 184, 0.10));
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 14px; width: 100%; min-width: 142px; box-sizing: border-box;
+            padding: 9px 14px; border-radius: 8px; cursor: pointer;
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            background: var(--surface-2);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
             color: var(--txt-sub);
-            font-size: 9.6px; font-weight: 800; letter-spacing: 0.4px;
-            text-transform: uppercase; white-space: nowrap;
+            font-size: 10.8px; font-weight: 800; letter-spacing: 0.35px;
+            text-transform: uppercase; white-space: nowrap; text-align: left;
             transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
             position: relative;
         }
-        .th-filter-pill i { font-size: 8.4px; opacity: 0.75; }
-        .th-filter-pill:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(59, 130, 246, 0.12); }
+        /* Etiket daima solda ve esnek; ok `margin-left: auto` ile en sağa kilitlenir
+           (space-between tek başına, içerik kısa olan sütunlarda oku ortada bırakır).
+           `min-width: 0` iki satırlı başlıkların (KATEGORİ / PROTOKOL) taşmasını önler. */
+        .th-filter-pill .th-filter-label {
+            flex: 0 1 auto; min-width: 0; text-align: left; display: block;
+        }
+        .th-filter-pill i { font-size: 8.4px; opacity: 0.75; margin-left: auto; flex: 0 0 auto; }
+        .th-filter-pill:hover {
+            border-color: var(--color-primary); color: var(--color-primary);
+            background: var(--surface-3);
+            box-shadow: 0 2px 12px -3px rgba(0, 0, 0, 0.45);
+        }
         .th-filter-pill.filter-icon-active {
             border-color: var(--color-primary);
             color: var(--color-primary);
@@ -4267,7 +4291,7 @@
         @media (prefers-reduced-motion: reduce) {
             .th-filter-pill .th-filter-caret { transition: none; }
         }
-        [data-theme="light"] .th-filter-pill { background: rgba(100, 116, 139, 0.08); }
+        [data-theme="light"] .th-filter-pill { border-color: rgba(8, 47, 54, 0.18); }
         [data-theme="light"] .th-filter-pill.filter-icon-active { background: rgba(59, 130, 246, 0.12); }
 
         .tag { display: inline-flex; align-items: center; padding: 2px 6px; border-radius: 4px; font-size: 10.5px; font-weight: 700; white-space: nowrap; line-height: 1.15; height: 20px; margin: 0; }

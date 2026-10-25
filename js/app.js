@@ -583,9 +583,13 @@ function dismissSplash() {
 function startSplashLoaderOnce() {
     if (splashLoaderStarted) return;
     splashLoaderStarted = true;
-    /* Mod seçimi yapıldı: splash'i görünür kılıp animasyonu başlat. */
+    /* Mod seçimi yapıldı: splash'i KESİN görünür kıl. Açılışta .hidden
+       sınıfıyla gizli tutuluyordu (mod seçimi ilk ekran olsun diye). */
     const splash = document.getElementById('splash-screen');
-    if (splash && !splash.classList.contains('hidden')) setSplashVisibility(true);
+    if (splash) setSplashVisibility(true);
+    /* Dashboard, opak yükleyicinin ARKASINDA görünür kılınır: geçiş
+       hissedilmez, yükleme %100 olunca loader kapanır ve panel hazırdır. */
+    revealAppBehindSplash();
     startSplashLoader();
 }
 
@@ -1663,6 +1667,11 @@ function bootAfterUnlock() {
     initMapResizeObserver();
     initDashboardSplitters();
 
+    /* AÇILIŞ KAPISI: ilk ekran Mod Seçimi olsun; dashboard gizli başlar.
+       (Zincirin SONUNDA çağrılır: modal açıldığında tüm arka plan render'ı
+       tamamlanmış olur, kullanıcı 'Devam Et' derken panel hazırdır.) */
+    openStartupModeGate();
+
     document.addEventListener('keydown', (e) => {
         /* Ctrl+Z / Cmd+Z geri al. Metin yazılan bir alanda (input, textarea,
            contenteditable, zengin metin editörü) tarayıcının kendi geri alma
@@ -2347,11 +2356,12 @@ function zkHideLock() {
     el.overlay.setAttribute('aria-hidden', 'true');
     document.body.style.overflow = '';
 
-    /* Kilit kapandı: açılış ekranı artık startSplashLoader() tarafından
-       sürüleceği için görünürlüğünü geri veriyoruz. zkShowLock() yalnızca
-       İLK açılışta onu gizliyordu; yeniden kilitlemede zaten gizliydi. */
+    /* Kilit kapandı. AÇILIŞ KAPISI: mod seçimi henüz yapılmadıysa splash
+       GİZLİ kalır; aksi hâlde hiç başlamamış loader "0%"da donmuş bir katman
+       olarak mod seçiminin arkasında belirirdi. Yalnızca loader gerçekten
+       başlatıldıysa (startSplashLoaderOnce) görünür kılınır. */
     const splash = document.getElementById('splash-screen');
-    if (splash && !splash.classList.contains('hidden')) setSplashVisibility(true);
+    if (splash && !splash.classList.contains('hidden') && splashLoaderStarted) setSplashVisibility(true);
 
     /* Parola alanları RAM'de kalmasın diye boşaltılır. */
     if (el.pw) el.pw.value = '';
@@ -10484,7 +10494,7 @@ function renderNotes() {
                     <span class="tag" style="background:rgba(139,92,246,0.2);color:var(--color-violet);font-size:10.5px;">${escapeHtml(topic)}</span>
                 </div>
                 <strong class="note-card-title" title="İçeriği açmak/kapatmak için tıklayın" onclick="toggleNoteAccordion(event, '${n.id}')"><i class="fa-solid fa-chevron-down note-acc-caret" aria-hidden="true"></i>${highlightNoteTitle(n.title)}</strong>
-                <div class="note-acc-body"><p class="note-card-body">${sanitizeNoteHtml(n.body)}</p></div>
+                <div class="note-acc-body"><div class="note-card-body">${sanitizeNoteHtml(n.body)}</div></div>
                 <div style="margin-top:auto;display:flex;justify-content:flex-end;gap:4px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);">
                     <button class="btn-icon" title="Düzenle" onclick="openNoteModal('${n.id}')"><i class="fa-solid fa-pen"></i></button>
                     <button class="btn-icon delete" title="Sil" onclick="deleteNote('${n.id}')"><i class="fa-solid fa-trash-can"></i></button>
@@ -12234,6 +12244,27 @@ function closeWorkModeModal() {
     const pwInput = document.getElementById('wm-password-input');
     if (pwInput) pwInput.value = '';
     document.body.style.overflow = '';
+    /* AÇILIŞ KAPISI: kullanıcı mod seçmeden pencereyi kapattıysa (Vazgeç / X)
+       dashboard görünür olmalı; aksi hâlde ekran tamamen boş kalırdı.
+       splashLoaderStarted yalnızca mod seçilince true olur. */
+    if (!splashLoaderStarted) revealAppBehindSplash();
+}
+
+/* AÇILIŞ KAPISI — İLK EKRAN HER ZAMAN MOD SEÇİMİDİR
+   --------------------------------------------------------------------------
+   Sayfa açıldığında splash GİZLİ ve dashboard (body.wm-gate-active ile)
+   tamamen gizlidir; kullanıcıyı İLK olarak bu mod seçim modalı karşılar.
+   'Devam Et' → startSplashLoaderOnce() yükleyiciyi gösterir, dashboard'u
+   arkasında görünür kılar; yükleme %100 olunca loader kapanır ve panel
+   görünür kalır. Böylece sıra: Mod Seçimi → Yükleme → Dashboard. */
+function openStartupModeGate() {
+    const splash = document.getElementById('splash-screen');
+    if (splash) setSplashVisibility(false);
+    showWorkModeModal();
+}
+
+function revealAppBehindSplash() {
+    document.body.classList.remove('wm-gate-active');
 }
 
 /* Rozet tıklanınca mod seçim modalı açılır/kapatılır. */
@@ -12256,8 +12287,15 @@ function initKineticWelcomeTitle() {
     if (!title) return;
     if (typeof wmKineticCleanup === 'function') { wmKineticCleanup(); wmKineticCleanup = null; }
     const words = WM_WELCOME_TEXT.split(' ');
+    /* Harf harf giriş: her harfe kademeli animation-delay verilir; başlık
+       soldan sağa "yazılıyormuş" gibi zarifçe kurulur. */
+    let chIndex = 0;
     title.innerHTML = words.map(w =>
-        `<span class="wm-kin-word">${w.split('').map(ch => `<span class="wm-kin-ch">${ch}</span>`).join('')}</span>`
+        `<span class="wm-kin-word">${w.split('').map(ch => {
+            const span = `<span class="wm-kin-ch" style="animation-delay:${chIndex * 22}ms">${ch}</span>`;
+            chIndex++;
+            return span;
+        }).join('')}</span>`
     ).join('');
     const chars = Array.from(title.querySelectorAll('.wm-kin-ch'));
     const onEnter = (ev) => {
@@ -12301,12 +12339,23 @@ function confirmPrivateLogout() {
             </div>
         </div>`;
     document.body.appendChild(ov);
-    const kapat = () => { const el = document.getElementById('wm-logout-confirm'); if (el) el.remove(); };
+    /* ESC dinleyicisi her kapanışta sökülür (Evet/Hayır/dışarı tıklama dahil);
+       aksi hâlde her açılışta DOM'a yeni bir dinleyici birikirdi. */
+    const escDinle = (e) => { if (e.key === 'Escape') kapat(); };
+    const kapat = () => {
+        const el = document.getElementById('wm-logout-confirm');
+        if (el) el.remove();
+        document.removeEventListener('keydown', escDinle);
+    };
     ov.querySelector('#wm-logout-no').addEventListener('click', kapat);
     ov.addEventListener('click', (e) => { if (e.target === ov) kapat(); });
-    const escDinle = (e) => { if (e.key === 'Escape') { kapat(); document.removeEventListener('keydown', escDinle); } };
     document.addEventListener('keydown', escDinle);
-    ov.querySelector('#wm-logout-yes').addEventListener('click', () => {
+    ov.querySelector('#wm-logout-yes').addEventListener('click', (ev) => {
+        /* Çift tıklama koruması: iki buton da kilitlenir. */
+        const yesBtn = ev && ev.currentTarget;
+        const noBtn = ov.querySelector('#wm-logout-no');
+        if (yesBtn) { yesBtn.disabled = true; yesBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Kaydediliyor…'; }
+        if (noBtn) noBtn.disabled = true;
         /* 1) Son güncellemeleri buluta yaz (sessiz; hata olursa akış durmaz). */
         const gonderi = (typeof syncJobsToCloud === 'function') ? syncJobsToCloud('private-logout') : Promise.resolve(false);
         Promise.resolve(gonderi).catch(() => {}).then(() => {
