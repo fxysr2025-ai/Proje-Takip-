@@ -533,7 +533,9 @@ function startSplashLoader() {
                 const splash = document.getElementById('splash-screen');
                 if (splash) {
                     splash.classList.add('hiding');
-                    setTimeout(() => splash.classList.add('hidden'), 620);
+                    /* 620ms sonra KALICI kapatma: hidden sinifi + inline
+                       kalinti temizligi (bkz. dismissSplash). */
+                    setTimeout(() => dismissSplash(), 620);
                 }
             }, 700);
         }
@@ -545,12 +547,45 @@ function startSplashLoader() {
    doğrudan Public/Private kartları görünür; loader yalnızca kullanıcı bir mod
    seçip panele geçtikçe gösterilir (applySelectedWorkMode → başlatır). */
 let splashLoaderStarted = false;
+
+/* --------------------------------------------------------------------------
+   SPLASH GÖRÜNÜRLÜK KAPISI — POINTER-EVENTS GÜVENLİĞİ
+   --------------------------------------------------------------------------
+   #splash-screen, z-index 99999'da TAM EKRAN bir katmandır. Onu YALNIZCA
+   opacity ile gizlemek yetmez: katman görünmez kalır ama fare tıklamalarını
+   yutmaya devam eder; altındaki dashboard "ölü" hâle gelir ve hiçbir butona,
+   menüye veya forma tıklanamaz. Bu yardımcı, görünürlüğü pointer-events ile
+   BİRLİKTE yönetir: gizlendiğinde katman fare için tamamen saydam olur. */
+function setSplashVisibility(visible) {
+    const splash = document.getElementById('splash-screen');
+    if (!splash) return;
+    if (visible) {
+        splash.classList.remove('hidden');
+        splash.style.opacity = '';
+        splash.style.pointerEvents = 'auto';
+    } else {
+        splash.style.opacity = '0';
+        splash.style.pointerEvents = 'none';
+    }
+}
+
+/* Splash'i KALICI olarak kapatır: hidden sınıfı (opacity 0 + visibility
+   hidden + pointer-events none + display none) devreye girer ve inline
+   kalıntılar silinir; böylece asılı bir katman imkânsız hâle gelir. */
+function dismissSplash() {
+    const splash = document.getElementById('splash-screen');
+    if (!splash) return;
+    splash.classList.add('hidden');
+    splash.style.opacity = '';
+    splash.style.pointerEvents = '';
+}
+
 function startSplashLoaderOnce() {
     if (splashLoaderStarted) return;
     splashLoaderStarted = true;
     /* Mod seçimi yapıldı: splash'i görünür kılıp animasyonu başlat. */
     const splash = document.getElementById('splash-screen');
-    if (splash && !splash.classList.contains('hidden')) splash.style.opacity = '';
+    if (splash && !splash.classList.contains('hidden')) setSplashVisibility(true);
     startSplashLoader();
 }
 
@@ -2295,7 +2330,7 @@ function zkShowLock(mode) {
        ekranda kalır. Kilit açılana kadar onu gizliyoruz: hem yanıltıcı
        olmaktan çıkar, hem de kilit zaten kendi cam yüzeyini gösterir. */
     const splash = document.getElementById('splash-screen');
-    if (splash && !splash.classList.contains('hidden')) splash.style.opacity = '0';
+    if (splash && !splash.classList.contains('hidden')) setSplashVisibility(false);
 
     setTimeout(() => { if (el.pw) el.pw.focus(); }, 60);
 }
@@ -2313,7 +2348,7 @@ function zkHideLock() {
        sürüleceği için görünürlüğünü geri veriyoruz. zkShowLock() yalnızca
        İLK açılışta onu gizliyordu; yeniden kilitlemede zaten gizliydi. */
     const splash = document.getElementById('splash-screen');
-    if (splash && !splash.classList.contains('hidden')) splash.style.opacity = '';
+    if (splash && !splash.classList.contains('hidden')) setSplashVisibility(true);
 
     /* Parola alanları RAM'de kalmasın diye boşaltılır. */
     if (el.pw) el.pw.value = '';
@@ -2596,7 +2631,7 @@ function wmMigrateVaultToPublicFromSession() {
 function zkBootWorkModeGate() {
     /* Splash, mod seçilene dek görünmez. */
     const splashEarly = document.getElementById('splash-screen');
-    if (splashEarly && !splashEarly.classList.contains('hidden')) splashEarly.style.opacity = '0';
+    if (splashEarly && !splashEarly.classList.contains('hidden')) setSplashVisibility(false);
     if (!wmHasEncryptedVault()) {
         zkPlainCache = wmFillPublicCache();
         return Promise.resolve();

@@ -392,6 +392,9 @@
         #splash-screen {
             position: fixed;
             top: 0; left: 0; width: 100vw; height: 100vh;
+            /* Gorunurken tiklamalari kendi uzerinde tutar; gizlenince
+               .hidden sinifi pointer-events:none + display:none uygular. */
+            pointer-events: auto;
             background: #030712;
             background-image:
                 linear-gradient(rgba(56, 189, 248, 0.05) 1px, transparent 1px),
@@ -418,6 +421,12 @@
             opacity: 0;
             visibility: hidden;
             pointer-events: none;
+            /* KESIN GARANTI: splash, z-index 99999'da TAM EKRAN bir katmandir.
+               Yalnizca opacity/visibility ile gizlemek, gorunmez ama FAREYI
+               YUTAN bir katman birakir ve alttaki panel "olu" hale gelir.
+               display:none katmani duzenden tamamen cikarir; tiklama asla
+               asili kalmaz. */
+            display: none;
         }
 
         /* Köşe mimari etiketler (drawing corner marks) */
