@@ -1636,8 +1636,11 @@ function bootAfterUnlock() {
     initWorkMode();
     if (typeof isWorkModePrivate === 'function' && isWorkModePrivate()) {
         if (typeof hookSaveAllDataForCloudSync === 'function') hookSaveAllDataForCloudSync();
-        if (typeof initCloudSyncWatcher === 'function') initCloudSyncWatcher();
     }
+    /* TEK ÇAĞRI: daha önce private dalda bir kez, hemen ardından koşulsuz bir
+       kez daha çağrılıyordu. İkinci çağrı clearInterval/setInterval ile
+       zamanlayıcıyı boşuna yeniden kurup aynı anda ikinci bir bulut çekimi
+       tetikliyordu (açılışta çift GET). */
     if (typeof initCloudSyncWatcher === 'function') initCloudSyncWatcher();
     populateCityDropdown();
     
@@ -13174,7 +13177,12 @@ function parseCloudPayload(payload) {
         settings: (payload && payload.settings && typeof payload.settings === 'object') ? payload.settings : null,
         headerTitles: (payload && payload.headerTitles && typeof payload.headerTitles === 'object') ? payload.headerTitles : null,
         customListColumns: (payload && Array.isArray(payload.customListColumns)) ? payload.customListColumns : null,
-        profile: (payload && payload.profile && typeof payload.profile === 'object') ? payload.profile : null
+        profile: (payload && payload.profile && typeof payload.profile === 'object') ? payload.profile : null,
+        /* MÜELLİF BİLDİRİMLERİ: sunucu bu alanı GET yanıtında döner
+           (Upstash anahtarı: yaser_guest_messages). Alan burada taşınmazsa
+           syncJobsFromCloud'a undefined ulaşır, updateGuestMessages() erken
+           döner ve sağ odak bildirim kutusu hiç tazelenmez. */
+        guestMessages: (payload && Array.isArray(payload.guestMessages)) ? payload.guestMessages : null
     };
 }
 
