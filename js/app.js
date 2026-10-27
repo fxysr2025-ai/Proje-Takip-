@@ -1576,6 +1576,16 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
+    /* AÇILIŞ KAPISI — İLK KARE, HEMEN
+       ---------------------------------------------------------------------
+       Mod seçim modalı, ağır boot zinciri (veri yükleme, harita render,
+       tablo çizimi) BEKLENMEDEN burada, senkron olarak açılır. Böylece sayfa
+       çizildiği ANDA ekranda mod seçimi olur; dashboard hiçbir kare öne
+       çıkmaz (body.wm-gate-active zaten .app-layout'u gizli tutar).
+       Önceden çağrı zincirin EN SONUNDA yapılıyordu: veri yükleme bitene
+       kadar dashboard görünüyor, modal geç geliyordu. */
+    openStartupModeGate();
+
     /* --- UÇTAN UCA ŞİFRELEME: uygulama verisi yüklenmeden ÖNCE master parola
        istenir. Kilit açılana kadar loadAllData()/renderCurrentView() çalışmaz,
        dolayısıyla çözülmemiş hiçbir veri ekrana da gelmez. Web Crypto destek
@@ -1604,7 +1614,6 @@ function bootAfterUnlock() {
     initFxCursorGlow();
     initFxSurfaceSheen();
     initFxTableRows();
-    initFxDigitRoll();
     initScreensaver();
     /* GÖREV 1 & 5: kayıtlı odak modu ve harita dokunma uyarısı.
        Zen modu initScreensaver()'den SONRA uygulanır: aksi hâlde zen modda
@@ -1614,6 +1623,9 @@ function bootAfterUnlock() {
     initMapTouchHint();
     initMobileNav();
     initTheme();
+    /* TEMA SONRASI: mod seçim kapısı init() içinde temadan ÖNCE açılıyor;
+       başlığın harf paleti kayıtlı temaya göre burada tazelenir. */
+    refreshStartupGateTitle();
     loadCustomTheme();
     /* Profil adı/rolü/birimi HTML'de statik yazılıdır; kayıtlı tercihle
        eşleştirmek için ilk açılışta DOM'a yansıtılır. */
@@ -1655,9 +1667,6 @@ function bootAfterUnlock() {
        Ana Sayfa için gösterilir. Sonraki panellerde navigateTo() yeniler. */
     renderPanelGuide(activeView || 'home');
 
-    /* KPI çip tıklama + tooltip dinleyicileri (bir kez bağlanır). */
-    initKpiChipInteractions();
-
     /* Günler arası görev taşıma + gece yarısı otomatik devri (kullanıcı isteği). */
     initTaskDayDragDrop();
     runMidnightTaskRollover(true);
@@ -1667,10 +1676,10 @@ function bootAfterUnlock() {
     initMapResizeObserver();
     initDashboardSplitters();
 
-    /* AÇILIŞ KAPISI: ilk ekran Mod Seçimi olsun; dashboard gizli başlar.
-       (Zincirin SONUNDA çağrılır: modal açıldığında tüm arka plan render'ı
-       tamamlanmış olur, kullanıcı 'Devam Et' derken panel hazırdır.) */
-    openStartupModeGate();
+    /* NOT: AÇILIŞ KAPISI burada DEĞİL, boot zincirinin EN BAŞINDA çağrılır
+       (bkz. init() içindeki "AÇILIŞ KAPISI — İLK KARE" bloğu). Buradaki eski
+       çağrı kaldırıldı: modal veri yüklemesi bittikten sonra açıldığı için
+       dashboard bir an görünüyor, sonra modal üstüne biniyordu. */
 
     document.addEventListener('keydown', (e) => {
         /* Ctrl+Z / Cmd+Z geri al. Metin yazılan bir alanda (input, textarea,
@@ -1703,6 +1712,12 @@ function bootAfterUnlock() {
             return;
         }
         if (e.key === 'Escape') {
+            /* ZK KİLİDİ ÖNCELİĞİ: kilit katmanı (z-index 100000) tüm
+               modalların ÜSTÜNDE durur. Görünürken ESC yalnızca onu
+               kapatır; arkadaki modallar etkilenmez (aksi hâlde kilit
+               kapandığında kullanıcı, arka planda üst üste kapanmış
+               modallar bulurdu). */
+            if (zkIsLockVisible()) { zkRequestClose(); return; }
             closeJobModal();
             closeNoteModal();
             closeFileModal();
@@ -1820,6 +1835,19 @@ function toggleDarkMode() {
     document.documentElement.setAttribute('data-theme', next);
     localStorage.setItem('yaser_theme', next);
     if(mapG) updateMapColors();
+    /* GEÇİŞ KAPISI açıkken tema değişirse kinetik başlığın harf paleti
+       yeniden hesaplanır; aksi hâlde gümüş→turkuaz geçişi eski temanın
+       tonlarında kalır. */
+    refreshStartupGateTitle();
+}
+
+/* Kinetik karşılama başlığının paleti `data-theme` değerine bağlıdır.
+   Başlık, tema henüz uygulanmadan kurulabildiği için (init sırası) paletin
+   yeniden hesaplanması gerekir. Modal kapalıysa hiçbir iş yapılmaz. */
+function refreshStartupGateTitle() {
+    const modal = document.getElementById('work-mode-modal');
+    if (!modal || !modal.classList.contains('active')) return;
+    if (typeof initKineticWelcomeTitle === 'function') initKineticWelcomeTitle();
 }
 
 function loadCustomTheme() {
@@ -2145,6 +2173,35 @@ const _zkWriteChains = new Map();           // key -> Promise (yazma sırası)
 const zkCipherCache = new Map();            // key -> son yazılan şifreli metin
 let zkUnlockPending = null;                 // kilit açılınca çalışacak callback
 let zkMode = 'unlock';                      // 'unlock' | 'setup'
+let zkBusy = false;                         // submit sürerken true (ESC/overlay kapatmayı engeller)
+
+/* --- ZK KİLİDİ: ARAYÜZ KAPATMA (yalnızca görsel katman) --------------------
+   Şifreleme akışına (AES-GCM, PBKDF2, kasa kayıtları) dokunmaz. Kapatma,
+   mevcut güvenli zkHideLock() üzerinden yapılır: parolalar RAM'den
+   temizlenir, açılış kapısı (mod seçimi) doğru sırayla geri getirilir. */
+function zkIsLockVisible() {
+    const ov = document.getElementById('zk-lock-overlay');
+    if (!ov) return false;
+    return ov.classList.contains('active') ||
+           ov.getAttribute('aria-hidden') === 'false' ||
+           ov.style.pointerEvents === 'auto';
+}
+
+/* ESC / X / dış alan tıklamasının ortak kapı noktası. Submit işlemi
+   (PBKDF2 100k iterasyon + GCM çözümü) sürerken kapatma reddedilir:
+   kapatılsaydı "Şifre çözülüyor…" yazısı ortadan kalkıp arayüz askıda
+   kalırdı. Ayrıca backdrop tıklaması yalnızca DOĞRUDAN overlay'e
+   geldiyse kapatır; kart içindeki tıklamalar stopPropagation ile zaten
+   bu noktaya ulaşmaz. */
+function zkRequestClose() {
+    if (zkBusy) return;
+    zkHideLock();
+}
+
+function zkOverlayDismiss(ev) {
+    if (ev && ev.target && ev.target.id === 'zk-lock-overlay') zkRequestClose();
+}
+
 
 function zkB64(buf) {
     const b = new Uint8Array(buf);
@@ -2319,11 +2376,8 @@ function zkShowLock(mode) {
 
     if (el.title) el.title.textContent = isSetup ? 'Master Parola Belirle' : 'Uygulama Kilidi';
     if (el.desc) el.desc.innerHTML = isSetup
-        ? 'Verilerinizin şifrelenebilmesi için bir <b>Master Parola</b> belirleyin. ' +
-          'Bir kez girmeniz yeterli: anahtar bu cihaza <b>şifreli</b> olarak kaydedilir ve ' +
-          'sonraki açılışlarda sorulmaz. Üst bardaki <b>Kilitle</b> düğmesi otomatik açmayı kapatır.'
-        : 'Verileriniz bu tarayıcıda <b>AES-256-GCM</b> ile şifrelenerek saklanır. ' +
-          'Bu cihazda otomatik açma kapalı; devam etmek için Master Parola gerekir.';
+        ? 'Verilerinizin şifrelenebilmesi için bir <b>Master Parola</b> belirleyin. Bir kez girmeniz yeterli.'
+        : 'Verileriniz bu tarayıcıda <b>AES-256-GCM</b> ile şifrelenir; devam etmek için Master Parola gerekir.';
     if (el.submitTx) el.submitTx.textContent = isSetup ? 'Parolayı Kur ve Başla' : 'Kilidi Aç';
     if (el.confirm) el.confirm.style.display = isSetup ? 'flex' : 'none';
     if (el.pw2) el.pw2.value = '';
@@ -2335,6 +2389,13 @@ function zkShowLock(mode) {
     el.overlay.setAttribute('aria-hidden', 'false');
     el.overlay.classList.add('active');
     document.body.style.overflow = 'hidden';
+
+    /* SIRA: ZK kilidi mod seçiminden ÖNCE gelir. Kilit katmanı z-index
+       100000'de, mod modalı ise 100500'te olduğu için modal kilidin
+       ÜSTÜNDE kalırdı. Bu yüzden mod modalı geçici olarak kapatılır;
+       kilit açılınca zkHideLock onu geri getirir. */
+    const wmModal = document.getElementById('work-mode-modal');
+    if (wmModal && wmModal.classList.contains('active')) wmModal.classList.remove('active');
 
     /* Açılış ekranı (#splash-screen, z-index 99999) henüz ÇALIŞMADI: onu
        başlatan startSplashLoader() ancak parola girilince çağrılır. Yani
@@ -2362,6 +2423,13 @@ function zkHideLock() {
        başlatıldıysa (startSplashLoaderOnce) görünür kılınır. */
     const splash = document.getElementById('splash-screen');
     if (splash && !splash.classList.contains('hidden') && splashLoaderStarted) setSplashVisibility(true);
+
+    /* Kilit açıldı: mod seçim ekranı (açılış kapısı) geri getirilir. Mod
+       zaten seçilmişse (loader başladı) modal açılmaz. */
+    if (!splashLoaderStarted) {
+        const wmModal = document.getElementById('work-mode-modal');
+        if (wmModal && !wmModal.classList.contains('active')) showWorkModeModal();
+    }
 
     /* Parola alanları RAM'de kalmasın diye boşaltılır. */
     if (el.pw) el.pw.value = '';
@@ -2707,6 +2775,7 @@ function zkWaitUnlockForm() {
             const pass = (el.pw && el.pw.value) || '';
             if (!pass) { zkLockError('Lütfen Master Parola girin.'); return; }
             if (el.submit) el.submit.disabled = true;
+            zkBusy = true;
             const isSetup = zkMode === 'setup';
             if (el.error) el.error.textContent = isSetup ? 'Parola türetiliyor…' : 'Şifre çözülüyor…';
             try {
@@ -2732,6 +2801,7 @@ function zkWaitUnlockForm() {
                 else zkLockError('Hatalı Parola.');
             } finally {
                 if (el.submit) el.submit.disabled = false;
+                zkBusy = false;
             }
         });
     });
@@ -3694,7 +3764,13 @@ function exportDataJSON() {
         const ham = JSON.parse(_zkRead(PROFILE_SETTINGS_KEY));
         if (ham && typeof ham === 'object') profilNesnesi = ham;
     } catch (e) { profilNesnesi = null; }
-    const backupObj = { jobs, activeJobIds, notes, tasks, files, quickNotes, stickyNotes, weeklyGoal, settings, customHeaderTitles, dashLayout: loadDashLayout(), profile: profilNesnesi || getProfileSettings(), exportDate: new Date().toISOString() };
+    /* YEDEK DÜZELTMESİ: 'Aktif İşler' paneli activeJobIds'ten beslenir ve bu
+       anahtar eski sürümlerde de pakette vardı; ancak (1) noteTopics düz
+       yedeklerde hiç paketlenmiyordu, (2) restore sonrası dashboard paneli
+       hiçbir yerde garantilenmiyordu — renderCurrentView yalnızca
+       activeView === 'home' iken panelleri çizer, oysa yükleme Ayarlar
+       sayfasından yapılır. Şimdi hem paket tam, hem render garantili. */
+    const backupObj = { jobs, activeJobIds, notes, noteTopics, tasks, files, quickNotes, stickyNotes, weeklyGoal, settings, customHeaderTitles, dashLayout: loadDashLayout(), profile: profilNesnesi || getProfileSettings(), exportDate: new Date().toISOString() };
     _zkDownloadJSON(backupObj, 'EtutProje_Yedek_' + new Date().toISOString().split('T')[0] + '.json');
 }
 
@@ -3790,9 +3866,37 @@ function _applyBackupObject(data) {
        edilir: geçerli olan korunur, geçersiz ya da yinelenen yenisiyle
        değiştirilir. Kayıt verisi kaybolmaz. */
     jobs = sanitizeRecordIds(data.jobs, 'job');
-    if (data.activeJobIds) activeJobIds = data.activeJobIds.map(String);
+    /* YEDEK KİMLİK EŞLEMESİ: sanitizeRecordIds güvenli olmayan ya da
+       yinelenen kimlikleri YENİDEN üretir. activeJobIds (Aktif İşler
+       paneli) eski kimlikleri içerdiği için eşleme yapılmadan uygulanırsa
+       geçerlilik filtresi listeyi tamamen boşaltır ve panel "Aktif iş
+       seçilmedi" gibi görünür — başka cihaza taşınan yedekte bildirilen
+       hata tam olarak buydu. Burada eski->yeni haritası kurulur ve aktif
+       liste yeni kimliklere çevrilir; böylece panel her yedekte dolar. */
+    const _backupIdMap = new Map();
+    {
+        const _srcJobs = Array.isArray(data.jobs) ? data.jobs : [];
+        for (let _i = 0; _i < _srcJobs.length && _i < jobs.length; _i++) {
+            const _oldId = _srcJobs[_i] && _srcJobs[_i].id != null ? String(_srcJobs[_i].id) : null;
+            const _newId = jobs[_i] ? String(jobs[_i].id) : null;
+            if (_oldId && _newId && _oldId !== _newId) _backupIdMap.set(_oldId, _newId);
+        }
+    }
+    if (data.activeJobIds) {
+        const _validIds = new Set(jobs.map(j => String(j.id)));
+        activeJobIds = data.activeJobIds
+            .map(id => {
+                const s = String(id);
+                return _backupIdMap.has(s) ? _backupIdMap.get(s) : s;
+            })
+            .filter(id => _validIds.has(id));
+    }
     if (data.notes) notes = sanitizeRecordIds(data.notes, 'note');
-    if (data.noteTopics) noteTopics = data.noteTopics;
+    /* NOT: düz (şifresiz) yedeklerde noteTopics eskiden hiç paketlenmiyordu;
+       exportDataJSON'a eklendi. Burada "anahtar yedekte TANIMLIYSA" kontrolü
+       yapılır — boş dizi [] bile meşru bir yedektir ve mevcut verinin
+       üzerindeki eski pano listesinin silinmesi gerekir. */
+    if (Array.isArray(data.noteTopics)) noteTopics = data.noteTopics;
     if (data.tasks) { tasks = sanitizeRecordIds(data.tasks, 'task'); normalizeTaskDates(tasks); }
     if (data.files) files = sanitizeRecordIds(data.files, 'file');
     if (data.quickNotes) quickNotes = data.quickNotes;
@@ -3832,6 +3936,20 @@ function _applyBackupObject(data) {
     applyDynamicHeaderTitles();
     if (typeof applyProfileToDom === 'function') applyProfileToDom();
     renderCurrentView();
+
+    /* YEDEK DÜZELTMESİ — PANEL RENDER GARANTİSİ:
+       renderCurrentView, dashboard panellerini yalnızca o anki görünüm
+       'home' ise çizer. Yedek yükleme Ayarlar sayfasından yapıldığı için
+       home panelleri (Aktif İşler dahil) eski veriyle kalıyordu; kullanıcı
+       Dashboard'a döndüğünde "Aktif iş seçilmedi" gibi bir boş panel
+       görüyordu. Aşağıdaki dört çağrı idempotenttir: görünüm home ise
+       taze çizer, değilse bir sonraki renderCurrentView zaten güncel
+       state'i çizer. Panel DOM'u her koşulda güncel kalır. */
+    if (typeof renderDashActivePanel === 'function') renderDashActivePanel();
+    if (typeof renderDashDataPanel === 'function') renderDashDataPanel();
+    if (typeof renderDashDeadlinePanel === 'function') renderDashDeadlinePanel();
+    if (typeof renderDashTodayPanel === 'function') renderDashTodayPanel();
+    if (typeof updateGlobalCounts === 'function') updateGlobalCounts();
 }
 
 function _zkDownloadJSON(obj, filename) {
@@ -6036,7 +6154,7 @@ function collectStatsData() {
         /* İl dağılımı (harita paneliyle aynı kural: boş il sayılmaz) */
         if (j.il && String(j.il).trim()) ilCounts[String(j.il).trim()] = (ilCounts[String(j.il).trim()] || 0) + 1;
         else D.ilBilinmeyen++;
-        /* Tür kırılımı: updateGlobalKpiSubstats ile birebir */
+        /* Tür kırılımı (EGM/JGK/MSB birebir, geri kalanı DİĞER) */
         const tv = (j.tur || '').trim();
         if (tv === 'EGM') D.turCounts.EGM++;
         else if (tv === 'JGK') D.turCounts.JGK++;
@@ -7141,7 +7259,7 @@ function navigateToProjectsByTur(turVal) {
 const PANEL_GUIDE = {
     'home': {
         title: 'Ana Sayfa — Genel Bakış',
-        text: 'KPI kartları (toplam/aktif iş, bugünkü işler, yapım), Türkiye haritası ve dört canlı panel burada toplanır. Haritadaki bir ile tıklamak o ilin işlerini sağ drawer\'da açar; KPI çiplerine tıklamak tabloyu ilgili türe süzgeçler.'
+        text: 'Öncelik renk ayarları, önemli işaretli görevlerin vurgusunu yönetir. Türkiye haritası ve dört canlı panel burada toplanır. Haritadaki bir ile tıklamak o ilin işlerini sağ drawer\'da açar.'
     },
     'active-jobs': {
         title: 'Aktif İş Listesi — Takipteki işler',
@@ -7407,27 +7525,12 @@ function updateGlobalCounts() {
     let completedJobsCount = 0;
     let missingInfoCount = 0;
 
-    /* KPI kart 4 (YAPIM) ana sayacı: aşama kırılımı, KPI_ASAMA_ALL eşleşme
-       tablosuyla (updateGlobalKpiSubstats ile birebir aynı) burada toplanır.
-       "İhale (yapım sürecinde)" gibi bileşik etiketler ilk eşleşen aşamaya
-       gider; böylece ana sayaç ile çip kırılımı asla ayrışmaz. */
-    const asamaCounts = {};
-    KPI_ASAMA_ALL.forEach(key => { asamaCounts[key] = 0; });
-    let asamaUnrecognizedCount = 0;
-
     for (let i = 0; i < jobs.length; i++) {
         const j = jobs[i];
         if (activeIdSet.has(String(j.id))) validActiveCount++;
 
         const asamaText = (j.asama || '').toLocaleLowerCase('tr-TR');
         if (asamaText.includes('bitti') || asamaText.includes('tamamlanan')) completedJobsCount++;
-
-        let matchedAsamaKey = null;
-        for (let k = 0; k < KPI_ASAMA_ALL.length; k++) {
-            const keyText = KPI_ASAMA_ALL[k].toLocaleLowerCase('tr-TR');
-            if (asamaText === keyText || asamaText.includes(keyText)) { matchedAsamaKey = KPI_ASAMA_ALL[k]; break; }
-        }
-        if (matchedAsamaKey) asamaCounts[matchedAsamaKey]++; else asamaUnrecognizedCount++;
 
         if (checkJobMissingInfo(j)) missingInfoCount++;
     }
@@ -7450,16 +7553,6 @@ function updateGlobalCounts() {
     if (navCountMissingInfo) navCountMissingInfo.innerText = missingInfoCount;
     if (navCountFiles) navCountFiles.innerText = files.length;
 
-    animateCountUp('home-kpi-total', jobs.length);
-    animateCountUp('home-kpi-active', validActiveCount);
-    animateCountUp('home-kpi-today', todayTasksCount);
-    /* KART 4 artık YAPIM: ana sayaç "bitti" değil "Yapım" aşamasını gösterir. */
-    animateCountUp('home-kpi-biten', asamaCounts['Yapım']);
-
-    /* KPI kartlarının alt-istatistik çipleri (tür/aşama kırılımları, yüzde
-       payları, matematik doğrulaması ve toast uyarıları dahil). */
-    updateGlobalKpiSubstats({ total: jobs.length, active: validActiveCount, today: todayTasksCount, done: completedJobsCount });
-
     /* Ana ekran 2x2 panellerini de tazele: updateGlobalCounts her veri
        değişiminde (görev işaretle/sil/ekle, aktif iş seç/çıkar, undo,
        gece devri) çağrıldığı için tek noktadan tutarlılık sağlanır. */
@@ -7471,439 +7564,10 @@ function updateGlobalCounts() {
     renderTickerBar();
 }
 
-function animateCountUp(elementId, targetValue) {
-    const el = document.getElementById(elementId);
-    if (!el) return;
-
-    const target = Number(targetValue) || 0;
-    const from = Number(el.dataset.countValue || 0);
-    el.dataset.countValue = String(target);
-
-    if (el.dataset.countRaf) cancelAnimationFrame(Number(el.dataset.countRaf));
-    if (from === target) {
-        el.innerText = target;
-        /* FX: deger degismediyse bile hane yapisini hedefte tut (bkz. step). */
-        if (el.dataset.fxDigits === '1') syncFxDigitRoll(el);
-        return;
-    }
-
-    /* KPI kartında bir kez oynayan shine sweep */
-    const card = el.closest('.kpi-card');
-    if (card) {
-        card.classList.remove('kpi-shine');
-        void card.offsetWidth; /* animasyonu yeniden tetiklemek için reflow */
-        card.classList.add('kpi-shine');
-    }
-
-    const duration = 800;
-    const startedAt = performance.now();
-    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    if (reduceMotion) {
-        el.innerText = target;
-        return;
-    }
-
-    const step = (now) => {
-        const p = Math.min(1, (now - startedAt) / duration);
-        const eased = 1 - Math.pow(2, -10 * p); /* easeOutExpo */
-        const shown = Math.round(from + (target - from) * eased);
-        /* FX: .fx-digit yapisı kuruluysa innerText YAZMA. innerText yazimi
-           hane span'lerini siler ve sayma boyunca deger gorunmez olur
-           (olculmus hata: 800ms boyunca KPI bos kaldi). Bunun yerine
-           applyFxDigitText() yalnizca DEGERI degisen haneleri gunceller;
-           her karede yalnizca 1-3 span.textContent yazilir. */
-        if (el.dataset.fxDigits === '1') {
-            applyFxDigitText(el, String(shown));
-            if (p < 1) {
-                el.dataset.countRaf = String(requestAnimationFrame(step));
-            } else {
-                delete el.dataset.countRaf;
-                syncFxDigitRoll(el);
-            }
-            return;
-        }
-        el.innerText = shown;
-        if (p < 1) {
-            el.dataset.countRaf = String(requestAnimationFrame(step));
-        } else {
-            el.innerText = target;
-            delete el.dataset.countRaf;
-        }
-    };
-    el.dataset.countRaf = String(requestAnimationFrame(step));
-}
-
-/* KPI alt-istatistik sabitleri: kart chip kümelerini tek yerden yönetir.
-   Kural: her kartın kırılımı kartın ana sayacıyla toplanabilir olmalı
-   (EGM+JGK+MSB+DİĞER = TOPLAM İŞ gibi). Aşama sayaçları "includes" ile
-   eşlenir çünkü kayıtlarda "İhale (yapım sürecinde)" gibi uzun etiketler var. */
-const KPI_TUR_CHIPS = [
-    { label: 'EGM', dot: '#3b82f6' },
-    { label: 'JGK', dot: '#22c55e' },
-    { label: 'MSB', dot: '#f59e0b' },
-    { label: 'DİĞER', dot: '#94a3b8', others: true }
-];
-const KPI_ASAMA_CHIPS = [
-    { label: 'Proje', dot: '#10b981' },
-    { label: 'İhale', dot: '#3b82f6' }
-];
-/* KART 4 (YAPIM) tür çipleri KPI_TUR_CHIPS'i paylaşır; eski KPI_ASAMA_BARS
-   (Yapım/Beklemede/İptal/Bitti çipleri) kart 4 tür kırılımına dönüşünce
-   kaldırıldı. Aşama anahtar listesi burada, tek yerde yaşar: */
+/* Aşama anahtar listesi: istatistik görünümündeki aşama kırılımı ile
+   "İhale (yapım sürecinde)" gibi bileşik etiketlerin eşleşmesi tek yerden
+   yönetilir; includes ile ilk eşleşen aşama kazanır. */
 const KPI_ASAMA_ALL = ['Proje', 'İhale', 'Yapım', 'Beklemede', 'İptal', 'Bitti'];
-
-function updateGlobalKpiSubstats(mainCounts) {
-    /* Null-safe ana sayaçlar: veri henüz yüklenmemişse 0 gösterilir. */
-    const total = Number(mainCounts && mainCounts.total) || 0;
-    const active = Number(mainCounts && mainCounts.active) || 0;
-    const today = Number(mainCounts && mainCounts.today) || 0;
-    const done = Number(mainCounts && mainCounts.done) || 0;
-
-    /* Tek geçişte tür + aşama kırılımları (EGM/JGK/MSB birebir, geri kalan
-       her şey DİĞER; "-" ve tanımsız türler dahil → toplam değişmezi korunur).
-       Aşamalar includes ile esnek eşlenir ("İhale (talep)" gibi uzun etiketler
-       kayıplara karışmaz). PERF: filtre başına ayrı jobs.filter yerine tek döngü. */
-    const activeIdSet = new Set(activeJobIds.map(String));
-    const turCounts = { EGM: 0, JGK: 0, MSB: 0, DIGER: 0 };
-    const asamaAllCounts = {};
-    KPI_ASAMA_ALL.forEach(a => { asamaAllCounts[a] = 0; });
-    let asamaUnrecognized = 0;
-
-    for (let i = 0; jobs && i < jobs.length; i++) {
-        const j = jobs[i];
-        if (!j) continue;
-
-        const turVal = (j.tur || '').trim();
-        if (turVal === 'EGM') turCounts.EGM++;
-        else if (turVal === 'JGK') turCounts.JGK++;
-        else if (turVal === 'MSB') turCounts.MSB++;
-        else turCounts.DIGER++;
-
-        /* İlk eşleşme kazanır: "İhale (yapım sürecinde)" gibi bileşik etiketler
-           yalnızca İhale'ye sayılır, Yapım'a çift sayılmaz. Hiçbiri eşleşmezse
-           kayıt "Diğer" kovasına düşer → aşama toplamı her zaman total'e ulaşır. */
-        const asamaLower = (j.asama || '').toLocaleLowerCase('tr-TR');
-        let matchedAsama = false;
-        for (let k = 0; k < KPI_ASAMA_ALL.length; k++) {
-            const keyText = KPI_ASAMA_ALL[k].toLocaleLowerCase('tr-TR');
-            if (asamaLower === keyText || asamaLower.includes(keyText)) {
-                asamaAllCounts[KPI_ASAMA_ALL[k]]++;
-                matchedAsama = true;
-                break;
-            }
-        }
-        if (!matchedAsama) asamaUnrecognized++;
-    }
-
-    /* Bugünün görev kırılımı: tamamlananlar + ⚡/⭐ öncelik işaretçileri.
-       Ana sayaç (today) tamamlanmamışları sayar; çip yüzdesi için taban
-       olarak tamamlanan dahil geniş toplam kullanılır. */
-    let todayDone = 0;
-    let todayImportant = 0;
-    for (let i = 0; tasks && i < tasks.length; i++) {
-        const t = tasks[i];
-        if (!t || !isTaskDayToday(t.date)) continue;
-        if (t.completed) { todayDone++; continue; }
-        if (t.emoji === '⚡' || t.emoji === '⭐') todayImportant++;
-    }
-
-    /* --- DOĞRULAMA: matematik değişmezleri -------------------------------
-       1) EGM+JGK+MSB+DİĞER === jobs.length (TOPLAM İŞ)
-       2) (Proje+İhale+Yapım+Beklemede+İptal+Bitti+Diğer) === jobs.length
-          "Diğer" kovası tanınmayan aşamaları taşar; toplam yine total'e ulaşır. */
-    const turSum = turCounts.EGM + turCounts.JGK + turCounts.MSB + turCounts.DIGER;
-    let asamaSum = asamaUnrecognized;
-    KPI_ASAMA_ALL.forEach(a => { asamaSum += asamaAllCounts[a]; });
-    const validationWarnings = [];
-    if (turSum !== total) validationWarnings.push(`Tür kırılımı (${turSum}) TOPLAM İŞ (${total}) ile tutarsız.`);
-    if (asamaSum !== total) validationWarnings.push(`Aşama kırılımı (${asamaSum}) TOPLAM İŞ (${total}) ile tutarsız.`);
-
-    /* Aktif işlerin aşama kırılımı (AKTİF kartı Proje/İhale çipleri için). */
-    const activeAsamaCounts = { 'Proje': 0, 'İhale': 0 };
-    activeIdSet.forEach(idStr => {
-        const j = jobs.find(job => String(job.id) === idStr);
-        if (!j) return;
-        const asamaLower = (j.asama || '').toLocaleLowerCase('tr-TR');
-        KPI_ASAMA_CHIPS.forEach(cfg => {
-            const keyText = cfg.label.toLocaleLowerCase('tr-TR');
-            if (asamaLower === keyText || asamaLower.includes(keyText)) activeAsamaCounts[cfg.label]++;
-        });
-    });
-
-    /* --- KART 1: TOPLAM İŞ → tür kırılımı (EGM/JGK/MSB/DİĞER) --- */
-    renderKpiChipRow('kpi-substats-total', KPI_TUR_CHIPS.map(cfg => ({
-        label: cfg.label,
-        value: cfg.others ? turCounts.DIGER : (turCounts[cfg.label] || 0),
-        pctBase: total,
-        dot: cfg.dot,
-        tip: cfg.others
-            ? 'EGM, JGK ve MSB dışındaki tüm türler (İDARE UYGULAMA, KENTSEL, TALEP, tanımsız türler dahil)'
-            : `Türü ${cfg.label} olan tüm işler`,
-        action: () => kpiChipFilterTur(cfg.others ? 'DİĞER' : cfg.label)
-    })));
-
-    /* --- KART 2: AKTİF İŞLER → aktif işlerin Proje/İhale kırılımı --- */
-    renderKpiChipRow('kpi-substats-active', KPI_ASAMA_CHIPS.map(cfg => ({
-        label: cfg.label,
-        value: activeAsamaCounts[cfg.label] || 0,
-        pctBase: active,
-        dot: cfg.dot,
-        tip: `Aktif odak listesinde aşaması ${cfg.label} olan işler`,
-        action: () => kpiChipFilterAsama(cfg.label)
-    })));
-
-    /* --- KART 3: BUGÜNÜN İŞLERİ → tamamlanan + öncelik işaretçileri --- */
-    renderKpiChipRow('kpi-substats-today', [
-        {
-            label: 'Tamamlanan', value: todayDone, pctBase: (today + todayDone), dot: '#22c55e',
-            tip: 'Bugünün görev listesinde işaretlenmiş (bitmiş) görevler',
-            action: () => navigateTo('tasks')
-        },
-        {
-            label: '⚡ Öncelik', value: todayImportant, pctBase: today, dot: '#f43f5e',
-            tip: 'Bugünün ⚡/⭐ işaretli görevleri (öncelikli işler)',
-            action: () => navigateTo('tasks')
-        }
-    ]);
-
-    /* --- KART 4 (YAPIM): Yapım aşamasındaki işlerin EGM/JGK/MSB/DİĞER kırılımı.
-       Eşleşme, ana sayaçla (updateGlobalCounts → asamaCounts) birebir aynı
-       KPI_ASAMA_ALL tablosu üzerinden yapılır; böylece kart ana sayacı ile
-       çip toplamı her zaman eşittir (EGM+JGK+MSB+DİĞER = Yapım sayısı). --- */
-    const yapimTurCounts = { EGM: 0, JGK: 0, MSB: 0, DIGER: 0 };
-    for (let i = 0; jobs && i < jobs.length; i++) {
-        const j = jobs[i];
-        if (!j) continue;
-        const asamaLower = (j.asama || '').toLocaleLowerCase('tr-TR');
-        let isYapim = false;
-        for (let k = 0; k < KPI_ASAMA_ALL.length; k++) {
-            const keyText = KPI_ASAMA_ALL[k].toLocaleLowerCase('tr-TR');
-            if (asamaLower === keyText || asamaLower.includes(keyText)) { isYapim = (KPI_ASAMA_ALL[k] === 'Yapım'); break; }
-        }
-        if (!isYapim) continue;
-        const turVal = (j.tur || '').trim();
-        if (turVal === 'EGM') yapimTurCounts.EGM++;
-        else if (turVal === 'JGK') yapimTurCounts.JGK++;
-        else if (turVal === 'MSB') yapimTurCounts.MSB++;
-        else yapimTurCounts.DIGER++;
-    }
-
-    renderKpiChipRow('kpi-substats-biten', KPI_TUR_CHIPS.map(cfg => ({
-        label: cfg.label,
-        value: cfg.others ? yapimTurCounts.DIGER : (yapimTurCounts[cfg.label] || 0),
-        pctBase: asamaAllCounts['Yapım'] || 0,
-        dot: cfg.dot,
-        tip: cfg.others
-            ? 'Yapım aşamasında olup EGM/JGK/MSB dışı türde (İDARE UYGULAMA, KENTSEL, TALEP, tanımsız dahil) olan işler'
-            : `Yapım aşamasındaki, türü ${cfg.label} olan işler`,
-        action: () => kpiChipFilterYapimTur(cfg.others ? null : cfg.label)
-    })), { activeKey: 'Yapım', activeMatch: 'turFilter' });
-
-    /* Badge'ler canlı veriyle güncellenir (skeleton görünümü biter).
-       yapim: kart 4 rozetinin yüzde tabanı (Yapım/Toplam). */
-    updateKpiBadges({ total, active, today, done, yapim: asamaAllCounts['Yapım'] || 0 });
-
-/* Sayaç doğrulama uyarısı yalnızca oturum başına BİR kez konsola yazılır;
-   updateGlobalCounts her veri değişiminde çalıştığından aynı uyarı üst üste
-   pörflemesin (konsol birikintisi). Toast tarafında da aynı tek-sefer kuralı. */
-if (validationWarnings.length > 0) {
-    if (!window.__kpiValidationWarned) {
-        window.__kpiValidationWarned = true;
-        console.warn('[KPI doğrulama]', validationWarnings.join(' | '));
-        /* Toast yalnızca oturum başına bir kez: updateGlobalCounts her veri
-           değişiminde çalıştığından aynı uyarı üst üste pörfülerdi. */
-        if (!window.__kpiValidationToastShown) {
-            window.__kpiValidationToastShown = true;
-            if (typeof showToast === 'function') showToast('KPI doğrulama uyarısı: ' + validationWarnings.join(' '), 'warning');
-        }
-    }
-}
-}
-
-function updateKpiBadges(mainCounts) {
-    /* Kart 4 rozeti artık YAPIM: yüzde tabanı Yapım/Toplam (eski hali
-       tamamlandı/Toplam idi). done yüzdesi hâlâ hesaplanıp saklanır; başka
-       bir yerde gerekirse window.__kpiDonePct üzerinden okunabilir. */
-    const pctYapim = mainCounts.total > 0 ? Math.round((Number(mainCounts.yapim) / mainCounts.total) * 100) : 0;
-    const pctDone = mainCounts.total > 0 ? Math.round((mainCounts.done / mainCounts.total) * 100) : 0;
-    window.__kpiDonePct = pctDone;
-    const badgeDefs = [
-        { id: 'home-kpi-total-badge', text: `${mainCounts.total} kayıt` },
-        { id: 'home-kpi-active-badge', text: `${mainCounts.active} odak iş` },
-        { id: 'home-kpi-today-badge', text: `${mainCounts.today} görev` },
-        { id: 'home-kpi-biten-badge', text: `%${pctYapim} yapımda` }
-    ];
-    badgeDefs.forEach(def => {
-        const el = document.getElementById(def.id);
-        if (el) el.textContent = def.text;
-    });
-}
-
-/* Chip satırını çizer. chips: [{label, value, pctBase, dot, tip, action}].
-   Tıklama aksiyonları inline onclick ile serileştirilmez; her chip'e
-   data-kpi-action-idx verilir ve tıklama satır düzeyinde TEK dinleyiciyle
-   kayıt defterindeki (kpiChipActionRegistry) aksiyona yönlendirilir.
-   Böylece veri değerleri asla HTML özniteliğine kod olarak gömülmez. */
-const kpiChipActionRegistry = new Map();
-
-function renderKpiChipRow(containerId, chips, opts) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-
-    const options = opts || {};
-    const sumValues = chips.reduce((s, c) => s + (Number(c.value) || 0), 0);
-    container.classList.remove('kpi-loading');
-
-    if (sumValues === 0) {
-        container.innerHTML = '<span style="font-size:9.6px; font-weight:700; opacity:0.5; letter-spacing:0.3px;">Henüz veri yok</span>';
-        kpiChipActionRegistry.delete(containerId);
-        return;
-    }
-
-    /* Aktif durum: harita tür filtresi veya tablo aşama filtresiyle eşleşen çipler vurgulanır.
-       activeMatch: 'mapTur' (varsayılan) harita tür filtresine, 'turFilter' ise tablonun
-       Excel tür filtresine bakar (YAPIM kartındaki tür çipleri bunu kullanır). */
-    const activeTur = (typeof activeMapTypeFilter === 'string' && activeMapTypeFilter !== '-') ? activeMapTypeFilter : null;
-    const activeTurFilter = (typeof selectedExcelFilters['tur'] === 'string') ? selectedExcelFilters['tur'] : null;
-    const activeAsama = (typeof selectedExcelFilters['asama'] === 'string') ? selectedExcelFilters['asama'] : null;
-    const matchTurFilter = options.activeMatch === 'turFilter';
-
-    const actions = [];
-    const html = chips.map((c, idx) => {
-        const value = Number(c.value) || 0;
-        const base = Number(c.pctBase) || 0;
-        const pct = base > 0 ? Math.round((value / base) * 100) : 0;
-        const labelStr = String(c.label);
-        const isEmpty = value === 0 && !options.alwaysClickable;
-        const isActive = (options.activeKey === labelStr)
-            || (matchTurFilter ? (activeTurFilter === labelStr) : (activeTur === labelStr))
-            || (activeAsama === labelStr);
-        actions[idx] = isEmpty ? null : (c.action || null);
-        const tipText = `${String(c.tip || labelStr)} — ${value} kayıt${base > 0 ? `, payı %${pct}` : ''}`;
-        return `
-            <button type="button" class="kpi-chip${isEmpty ? ' kpi-chip-empty' : ''}${isActive ? ' kpi-chip-active' : ''}"
-                    data-kpi-row="${containerId}" data-kpi-action-idx="${idx}"
-                    data-kpi-tip="${escapeHtml(tipText)}">
-                <span class="kpi-chip-dot" style="background:${c.dot}; color:${c.dot};"></span>
-                <span class="kpi-chip-count">${value}</span>
-                <span class="kpi-chip-label">${escapeHtml(labelStr)}</span>
-                ${base > 0 ? `<span class="kpi-chip-pct">%${pct}</span>` : ''}
-            </button>`;
-    }).join('');
-
-    kpiChipActionRegistry.set(containerId, actions);
-    container.innerHTML = html;
-
-    /* Mini dağılım çubuğu (yalnızca istenirse): segment genişlikleri
-       yüzdesel paylarla orantılı; aktif anahtar segmenti vurgulanır. */
-    if (options.activeKey) {
-        const bar = document.createElement('span');
-        bar.className = 'kpi-chip-bar';
-        bar.innerHTML = chips.map(c => {
-            const value = Number(c.value) || 0;
-            const base = Number(c.pctBase) || 0;
-            const pct = base > 0 ? (value / base) * 100 : 0;
-            const isDone = options.activeKey === String(c.label);
-            return `<span class="kpi-chip-bar-seg${isDone ? ' seg-done' : ''}" style="flex:0 0 ${pct}%; background:${c.dot};" title="${escapeHtml(String(c.label))}: ${value}"></span>`;
-        }).join('');
-        container.appendChild(bar);
-    }
-}
-
-/* Chip tıklamaları: satır başına tek delege dinleyici (initKpiChipInteractions
-   ile bağlanır). Boş çipler (kpi-chip-empty) tıklamayı yok sayar. */
-function handleKpiChipClick(event) {
-    const chip = event.target.closest('.kpi-chip');
-    if (!chip || chip.classList.contains('kpi-chip-empty')) return;
-    /* Kartın onclick navigasyonunu (örn. navigateToProjectsAll) söndür:
-       chip tıklaması yalnızca kendi filtresini sürmelidir. */
-    event.stopPropagation();
-    const rowId = chip.getAttribute('data-kpi-row');
-    const idx = Number(chip.getAttribute('data-kpi-action-idx'));
-    const actions = kpiChipActionRegistry.get(rowId);
-    const action = actions ? actions[idx] : null;
-    if (typeof action === 'function') action();
-}
-
-function initKpiChipInteractions() {
-    ['kpi-substats-total', 'kpi-substats-active', 'kpi-substats-today', 'kpi-substats-biten'].forEach(rowId => {
-        const row = document.getElementById(rowId);
-        if (!row || row.dataset.kpiBound === '1') return;
-        row.dataset.kpiBound = '1';
-        row.addEventListener('click', handleKpiChipClick);
-    });
-    initKpiChipTooltips();
-}
-
-/* ÇİP → ÇAPRAZ FİLTRE KÖPRÜSÜ: chip tıklaması harita tür filtresi state'ini
-   (activeMapTypeFilter) sürer; setMapTypeFilter haritayı, sol süzgeç panelini
-   ve açık şehir çekmecesini zaten tazeler. Böylece tek state kaynağı üzerinden
-   harita + listeler birlikte filtrelenir. Aşama çipleri ise "Tüm İşler"
-   tablosunun Excel aşama filtresini (selectedExcelFilters['asama']) sürer. */
-function kpiChipFilterTur(chipLabel) {
-    if (!chipLabel) return;
-    if (chipLabel === 'DİĞER') {
-        if (typeof showToast === 'function') showToast('DİĞER birleşik bir kümedir; haritadan İDARE UYGULAMA, KENTSEL veya TALEP türlerinden birini seçebilirsiniz.', 'info');
-        return;
-    }
-    /* Zaten seçiliyse tekrar tıklamak filtreyi temizler (toggle). */
-    const target = (activeMapTypeFilter === chipLabel) ? null : chipLabel;
-    setMapTypeFilter(target);
-    if (typeof showToast === 'function') showToast(target ? `Harita + listeler "${target}" türüne göre filtrelendi.` : 'Tür filtresi sıfırlandı.', 'info');
-}
-
-/* YAPIM kartının tür çipleri → "Tüm İşler" tablosunun Excel tür filtresini
-   (selectedExcelFilters['tur']) sürer; EGM/JGK/MSB birebir filtrelenir.
-   DİĞER (null) birleşik bir küme olduğu için yalnızca bilgi toast'ı verilir —
-   harita kartındaki DİĞER davranışıyla aynı. Tabloda türsüz kayıtlar '-' ile
-   listelendiğinden getProjectsExcelFilteredJobs eşleşmesi ((j.tur || '-'))
-   ile uyumludur. */
-function kpiChipFilterYapimTur(chipLabel) {
-    if (!chipLabel) {
-        if (typeof showToast === 'function') showToast('DİĞER birleşik bir kümedir; tablodan İDARE UYGULAMA, KENTSEL veya TALEP türlerinden birini seçebilirsiniz.', 'info');
-        return;
-    }
-    /* Zaten seçiliyse tekrar tıklamak filtreyi temizler (toggle). */
-    const target = (selectedExcelFilters['tur'] === chipLabel) ? null : chipLabel;
-    if (target) selectedExcelFilters['tur'] = target; else delete selectedExcelFilters['tur'];
-    navigateTo('projects');
-    renderProjectsTable();
-    renderSidebarTurSublist();
-    if (typeof showToast === 'function') showToast(target ? `"Tüm İşler" tablosu "${target}" türüne göre filtrelendi.` : 'Tür filtresi sıfırlandı.', 'info');
-}
-
-/* mikro tooltip: tek element, fare konumuna göre konumlanır; viewport taşmaları
-   kenara yaslanarak engellenir. Dokunmatik cihazlarda devre dışıdır. */
-function initKpiChipTooltips() {
-    const tip = document.getElementById('kpi-chip-tip');
-    if (!tip || tip.dataset.kpiTipBound === '1') return;
-    tip.dataset.kpiTipBound = '1';
-
-    const coarsePointer = window.matchMedia && window.matchMedia('(hover: none)').matches;
-
-    document.addEventListener('mouseover', e => {
-        const chip = e.target.closest('.kpi-chip');
-        if (!chip || coarsePointer) return;
-        tip.textContent = chip.getAttribute('data-kpi-tip') || '';
-        tip.classList.add('kpi-tip-show');
-    });
-    document.addEventListener('mouseout', e => {
-        if (!e.target.closest || !e.target.closest('.kpi-chip')) return;
-        tip.classList.remove('kpi-tip-show');
-    });
-    document.addEventListener('mousemove', e => {
-        if (!tip.classList.contains('kpi-tip-show')) return;
-        const pad = 12;
-        let x = e.clientX + pad;
-        let y = e.clientY + pad;
-        const rect = tip.getBoundingClientRect();
-        if (x + rect.width > window.innerWidth - 8) x = e.clientX - rect.width - pad;
-        if (y + rect.height > window.innerHeight - 8) y = e.clientY - rect.height - pad;
-        tip.style.left = Math.max(8, x) + 'px';
-        tip.style.top = Math.max(8, y) + 'px';
-    });
-}
 
 /* MENÜ İNDİKATÖRÜ: aktif menü item'ının soluna kayan ışık çubuğu */
 function updateMenuIndicator() {
@@ -8018,17 +7682,17 @@ function initFxCursorGlow() {
     });
 }
 
-/* FX: SURFACE SHEEN - .kpi-card ve .widget-card ustune isil parlama.
-   Bu iki yuzeyde her iki pseudo-element slotu da dolu (::before cam
-   yansimasi, ::after kpi shine / widget kenarlik huzmesi). Yeni bir pseudo
-   eklemek mevcut efekti EZDI; bu yuzden eklenen bir <span> kullanilir.
+/* FX: SURFACE SHEEN - .widget-card ustune isil parlama.
+   Widget'ta her iki pseudo-element slotu da dolu (::before cam yansimasi,
+   ::after kenarlik huzmesi). Yeni bir pseudo eklemek mevcut efekti EZDI;
+   bu yuzden eklenen bir <span> kullanilir.
    Yalnizca HENUZ eklenmemis kartlara eklenir: uygulama kartlari render
-   sirasinda yeniden kurar (kpi degeri degisince vb.), bu yuzden her
-   DOM'a bakan bir MutationObserver yerine, ekleme aninda bir kez kon trol
-   edilir ve "data-fx-sheen" isaretiyle tekrar eklenmesi engellenir. */
+   sirasinda yeniden kurar, bu yuzden her DOM'a bakan bir MutationObserver
+   yerine, ekleme aninda bir kez kontrol edilir ve "data-fx-sheen" isaretiyle
+   tekrar eklenmesi engellenir. */
 function initFxSurfaceSheen() {
     const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const targets = document.querySelectorAll('.kpi-card, .widget-card');
+    const targets = document.querySelectorAll('.widget-card');
     targets.forEach(card => {
         if (reduceMotion) return;
         if (card.dataset.fxSheen === '1') return;
@@ -8064,87 +7728,6 @@ function initFxTableRows() {
     });
 }
 
-/* FX: DIGIT ROLL - .kpi-value icindeki sayiyi hane hane dondurur.
-   animateCountUp() sayma islemini zaten yapiyor ve hedef degeri
-   el.dataset.countValue icinde tutuyor. Bu fonksiyon o degeri okuyup
-   DOM'u hane span'lerine cevirir; animateCountUp kendi innerText yazma
-   koduna DOKUNULMAZ (aksi halde her karede tüm yapi yeniden kurulur).
-   Bunun yerine: kurulum bir kez yapilir, sonra animateCountUp bittiginde
-   hedef deger bu yapinin uzerine uygulanir (syncFxDigitRoll). */
-function initFxDigitRoll() {
-    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const values = document.querySelectorAll('.kpi-value');
-    values.forEach(el => {
-        if (reduceMotion) return;
-        if (el.dataset.fxDigits === '1') return;
-        el.dataset.fxDigits = '1';
-        el.classList.add('fx-digits');
-        /* Mevcut (muhtemelen 0) degerden baslat. */
-        el.innerHTML = '';
-        const start = el.dataset.countValue || '0';
-        String(start).split('').forEach(ch => {
-            const d = document.createElement('span');
-            d.className = 'fx-digit';
-            d.textContent = ch;
-            el.appendChild(d);
-        });
-    });
-}
-
-/* Hedef degere gore hane yapisini gunceller; yukselen haneler yukselir.
-   animateCountUp bittikten SONRA cagrilir (asagida bkz. patch). */
-function syncFxDigitRoll(el) {
-    if (!el || el.dataset.fxDigits !== '1') return;
-    const target = String(el.dataset.countValue || '0');
-    /* Uzunluk degistiyse (ornegin 9 -> 10) yapiyi yeniden kur. */
-    if (el.querySelectorAll('.fx-digit').length !== target.length) {
-        el.innerHTML = '';
-        target.split('').forEach(ch => {
-            const d = document.createElement('span');
-            d.className = 'fx-digit';
-            d.textContent = ch;
-            el.appendChild(d);
-        });
-        el.dataset.fxPrev = target;
-        return;
-    }
-    const prev = el.dataset.fxPrev || '';
-    const rising = !prev || Number(target) >= Number(prev);
-    target.split('').forEach((ch, i) => {
-        const d = el.querySelectorAll('.fx-digit')[i];
-        if (!d || d.textContent === ch) return;
-        d.textContent = ch;
-        d.classList.remove('is-up', 'is-down');
-        void d.offsetWidth; /* reflow: animasyonu yeniden tetikler */
-        d.classList.add(rising ? 'is-up' : 'is-down');
-    });
-    el.dataset.fxPrev = target;
-}
-
-/* Sayma animasyonu SIRASINDA her karede cagrilir (animateCountUp.step).
-   Yalnizca DEGERI degisen hanelerin textContent'i yazilir - boylece DOM
-   yapisı korunur ve hane span'leri her karede yeniden kurulmaz.
-   Animasyon YOK: sayma zaten hareketi veriyor; her hane 60fps'de
-   yeniden yazilsaydi kesintisiz ama kasıtlı olarak duruk bir geri sayım
-   gorunurdu (Awwwards tipi "flip" sayaclar). */
-function applyFxDigitText(el, text) {
-    const str = String(text);
-    let digits = el.querySelectorAll('.fx-digit');
-    /* Hane sayisi degistiyse yapıyı yeniden kur (ornegin 9 -> 10). */
-    if (digits.length !== str.length) {
-        el.innerHTML = '';
-        str.split('').forEach(ch => {
-            const d = document.createElement('span');
-            d.className = 'fx-digit';
-            d.textContent = ch;
-            el.appendChild(d);
-        });
-        return;
-    }
-    for (let i = 0; i < digits.length; i++) {
-        if (digits[i].textContent !== str[i]) digits[i].textContent = str[i];
-    }
-}
 
 /* --- BUGÜNKÜ ODAK İLETİLERİ: BİLDİRİM POPOVER'İ ---------------------------
    ÖNCEKİ HALİ: içerik sürekli kayan bir şeride (marquee) yazılıyordu ve
@@ -8282,9 +7865,8 @@ function renderCurrentView() {
        cagri onu geri getirir. initFxSurfaceSheen() idempotenttir (data-fx-sheen
        isaretiyle bir kez ekler), bu yuzden her render'da cagrilmasi guvenlidir. */
     initFxSurfaceSheen();
-    /* FX: ayni sekilde tablo satirlari ve KPI haneleri da yeniden kurulur. */
+    /* FX: ayni sekilde tablo satirlari yeniden kurulur. */
     initFxTableRows();
-    initFxDigitRoll();
 }
 
 function populateFormDropdowns() {
@@ -9458,9 +9040,6 @@ function populateExcelFilterOptions(columnKey) {
             if (j.alt_yuklenici && j.alt_yuklenici !== '-') uniqueValues.add(j.alt_yuklenici.trim());
         } else if (columnKey === 'asama') {
             if (j.asama) uniqueValues.add(j.asama.trim());
-        } else if (columnKey === 'last_timeline') {
-            const val = (j.timeline && j.timeline.length > 0) ? j.timeline[0].text : '-';
-            if (val) uniqueValues.add(val.trim());
         }
     });
 
@@ -9519,20 +9098,15 @@ function renderProjectsTable() {
         }
 
         if (selectedExcelFilters['asama'] && j.asama !== selectedExcelFilters['asama']) return false;
-        if (selectedExcelFilters['last_timeline']) {
-            const lastText = (j.timeline && j.timeline.length > 0) ? j.timeline[0].text : '-';
-            if (lastText !== selectedExcelFilters['last_timeline']) return false;
-        }
         return true;
     });
 
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color:var(--txt-muted); padding:10px;">Görüntülenecek iş kaydı bulunamadı.</td></tr>`; 
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--txt-muted); padding:10px;">Görüntülenecek iş kaydı bulunamadı.</td></tr>`; 
         return;
     }
 
     const htmlBuffer = filtered.map((j, index) => {
-        const lastTimeline = (j.timeline && j.timeline.length > 0) ? j.timeline[0].text : '-';
         const badgeClass = getStatusBadgeClass(j.asama);
         const isMissingInfo = checkJobMissingInfo(j);
         
@@ -9542,7 +9116,7 @@ function renderProjectsTable() {
                 <td><span class="tag" style="background:rgba(59,130,246,0.15); color:var(--color-primary);">${escapeHtml(j.section || '250Bin')}</span></td>
                 <td><span class="tag" style="background:rgba(139,92,246,0.15); color:var(--color-violet);">${escapeHtml(j.tur || '-')}</span></td>
                 <td class="col-il-ilce-cell"><strong style="color:var(--txt-main); font-weight:700;">${escapeHtml(j.il)}</strong><br><small style="color:var(--txt-muted); font-weight:500;">${escapeHtml(j.ilce)}</small></td>
-                <td><strong>${escapeHtml(j.is_tanimi)}</strong></td>
+                <td class="project-desc-cell"><strong style="color:var(--txt-muted); font-weight:600;">${escapeHtml(j.is_tanimi)}</strong></td>
                 <td><strong style="color:var(--txt-main); font-weight:600;">${escapeHtml(j.proje)}</strong><br><small style="color:var(--txt-muted); font-weight:500;">${escapeHtml(j.alt_yuklenici)}</small></td>
                 <td>
                     <span class="stage-status-wrap">
@@ -9553,7 +9127,6 @@ function renderProjectsTable() {
                         ${hasImportantTimelineNote(j) ? '<span class="stage-alert-pulse" title="Timeline içinde önemli not var"><i class="fa-solid fa-exclamation"></i></span>' : ''}
                     </span>
                 </td>
-                <td><small style="color:var(--txt-sub); font-weight:500;">${j.timeline && j.timeline[0] && j.timeline[0].important ? '<i class="fa-solid fa-triangle-exclamation" style="color:var(--color-amber); margin-right:4px;" title="Önemli not"></i>' : ''}${escapeHtml(lastTimeline)}</small></td>
                 <td onclick="event.stopPropagation();">
                     <div class="action-btns" style="justify-content:center;">
                         <button class="btn-icon" title="Detay" onclick="event.stopPropagation(); viewJobDetail('${j.id}')"><i class="fa-solid fa-eye"></i></button>
@@ -12223,17 +11796,10 @@ function showWorkModeModal() {
     if (!modal) return;
     /* KİNETİK KARŞILAMA BAŞLIĞI: her açılışta harfler yeniden kurulur. */
     if (typeof initKineticWelcomeTitle === 'function') initKineticWelcomeTitle();
-    /* VARSAYILAN GÖRÜNÜM: kartlar açık, şifre/TOTP alanı GİZLİ. Yalnızca
-       Private kartına tıklanınca (selectWorkModeOption) giriş alanı belirir. */
-    modal.querySelectorAll('.wm-option').forEach(opt => {
-        opt.classList.toggle('selected', opt.dataset.mode === 'public');
-    });
-    const pwWrap = document.getElementById('wm-password-wrap');
-    if (pwWrap) pwWrap.style.display = 'none';
-    const pwInput = document.getElementById('wm-password-input');
-    const err = document.getElementById('wm-error');
-    if (err) { err.textContent = ''; err.style.display = 'none'; }
-    if (pwInput) pwInput.value = '';
+    /* GEÇİŞ KAPISI — VARSAYILAN GÖRÜNÜM: iki cam kart yan yana süzülür,
+       hiçbir kart açık değildir. Private kartı yalnızca tıklanınca aşağı
+       doğru genişler ve parola alanı kartın İÇİNDE belirir. */
+    resetWorkModeSelection();
     modal.classList.add('active');
     document.body.style.overflow = 'hidden';
 }
@@ -12258,6 +11824,14 @@ function closeWorkModeModal() {
    arkasında görünür kılar; yükleme %100 olunca loader kapanır ve panel
    görünür kalır. Böylece sıra: Mod Seçimi → Yükleme → Dashboard. */
 function openStartupModeGate() {
+    /* Zaten mod seçildiyse (kullanıcı boot bitmeden Public'e tıkladıysa)
+       modal YENİDEN açılmaz; aksi hâlde kullanıcı seçim yapmışken pencere
+       geri gelirdi. splashLoaderStarted bu ayrımın tek göstergesidir. */
+    if (splashLoaderStarted) return;
+    /* ŞİFRELİ KASA VARSA ilk ekran ZK kilididir, mod seçimi değil. Burada
+       modalı açmak, kilit bir an sonra açılınca bir karelik yanıp sönme
+       yaratırdı. Kilit açıldığında zkHideLock() modalı kendisi açar. */
+    if (typeof wmHasEncryptedVault === 'function' && wmHasEncryptedVault()) return;
     const splash = document.getElementById('splash-screen');
     if (splash) setSplashVisibility(false);
     showWorkModeModal();
@@ -12287,12 +11861,38 @@ function initKineticWelcomeTitle() {
     if (!title) return;
     if (typeof wmKineticCleanup === 'function') { wmKineticCleanup(); wmKineticCleanup = null; }
     const words = WM_WELCOME_TEXT.split(' ');
+    /* HARF BAŞINA GRADIENT: `background-clip:text` yalnızca KENDİ metnini
+       boyadığı için gradient üst elemanda tutulamaz — harf span'lerine
+       verilir. Başlık boyunca kesintisiz bir renk geçişi görünmesi için her
+       harfin rengi, harfin satırdaki sırasına göre enterpole edilir. */
+    const totalChars = WM_WELCOME_TEXT.replace(/\s/g, '').length;
+    /* Tema duyarlı palet — GÜMÜŞTEN TURKUAZA akan shimmer:
+       koyu zeminde gümüş (açık) → turkuaz; açık zeminde slate → koyu cyan.
+       Her harfin üstüne ayrıca beyazımsı bir "highlight" bandı biner
+       (--wm-ch-hi); CSS'te soldan sağa kayarak Magic UI parlamasını üretir. */
+    const acikTema = document.documentElement.getAttribute('data-theme') === 'light';
+    const paletUst = acikTema ? [0x64, 0x74, 0x8b] : [0xe8, 0xee, 0xf7];  /* gümüş   */
+    const paletOrta = acikTema ? [0x47, 0x55, 0x69] : [0xc7, 0xd2, 0xe0]; /* çelik   */
+    const paletAlt = acikTema ? [0x0e, 0x74, 0x90] : [0x67, 0xe8, 0xf9];  /* turkuaz */
+    const paletKoyu = acikTema ? [0x1e, 0x29, 0x3b] : [0x22, 0xd3, 0xee]; /* dip ton */
+    const karistir = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+    const rgb = (c) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+    const parlak = (c) => `rgb(${Math.min(255, c[0] + 46)}, ${Math.min(255, c[1] + 46)}, ${Math.min(255, c[2] + 46)})`;
+    const renkler = (ratio) => {
+        const ust = ratio < 0.5
+            ? karistir(paletUst, paletOrta, ratio * 2)
+            : karistir(paletOrta, paletAlt, (ratio - 0.5) * 2);
+        /* Alt ton her zaman üst tondan bir tık koyu: harfe hacim verir. */
+        const alt = karistir(ust, paletKoyu, 0.34);
+        return { top: rgb(ust), hi: parlak(ust), bot: rgb(alt) };
+    };
     /* Harf harf giriş: her harfe kademeli animation-delay verilir; başlık
        soldan sağa "yazılıyormuş" gibi zarifçe kurulur. */
     let chIndex = 0;
     title.innerHTML = words.map(w =>
         `<span class="wm-kin-word">${w.split('').map(ch => {
-            const span = `<span class="wm-kin-ch" style="animation-delay:${chIndex * 22}ms">${ch}</span>`;
+            const c = renkler(totalChars > 1 ? chIndex / (totalChars - 1) : 0);
+            const span = `<span class="wm-kin-ch" style="animation-delay:${chIndex * 22}ms;--wm-ch-top:${c.top};--wm-ch-hi:${c.hi};--wm-ch-bot:${c.bot}">${ch}</span>`;
             chIndex++;
             return span;
         }).join('')}</span>`
@@ -12368,25 +11968,60 @@ function confirmPrivateLogout() {
     });
 }
 
-/* Modal içindeki mod kartına tıklanınca: seçim işaretlenir, parola alanı
-   yalnızca Private için görünür olur. */
+/* Mod kartına tıklanınca (GEÇİŞ KAPISI):
+   · PUBLIC  → mod ANINDA uygulanır (ek onay adımı YOK). Kart tıklaması tek
+     başına yeterlidir; splash loader seçimden SONRA başlar.
+   · PRIVATE → kart aşağı doğru yumuşakça genişler (CSS: .wm-open →
+     grid-template-rows 0fr→1fr) ve Master Parola / TOTP alanı kartın İÇİNDE
+     fade-in ile belirir. Kimlik doğrulanana kadar mod DEĞİŞMEZ.
+   GÜVENLİK: burada yalnızca DOM sınıfları ve görünürlük yönetilir; parola
+   doğrulama (verifyMasterPasswordWithCloud), Upstash senkronizasyonu ve
+   localStorage akışları DEĞİŞTİRİLMEMİŞTİR. */
 function selectWorkModeOption(mode, ev) {
     const card = (ev && ev.currentTarget) ? ev.currentTarget : null;
     const opt = card && card.closest ? card.closest('.wm-option') : null;
-    document.querySelectorAll('#work-mode-modal .wm-option').forEach(o => o.classList.remove('selected'));
-    if (opt) opt.classList.add('selected');
-    else {
-        document.querySelectorAll('#work-mode-modal .wm-option').forEach(o => {
-            o.classList.toggle('selected', o.dataset.mode === mode);
-        });
-    }
-    const pwWrap = document.getElementById('wm-password-wrap');
-    if (pwWrap) pwWrap.style.display = (mode === 'private') ? 'flex' : 'none';
+    const modal = document.getElementById('work-mode-modal');
+    if (!modal) return;
+    /* `.selected` yalnızca mantıksal durumdur (applySelectedWorkMode okur). */
+    modal.querySelectorAll('.wm-option').forEach(o => o.classList.toggle('selected', o.dataset.mode === mode));
+    /* Açılır alan bayrağı: yalnızca Private kartında bulunur. */
+    const privateCard = modal.querySelector('.wm-gate-card--private');
+    if (privateCard) privateCard.classList.toggle('wm-open', mode === 'private');
+
     const err = document.getElementById('wm-error');
     if (err) { err.textContent = ''; err.style.display = 'none'; }
+
+    if (mode === 'public') {
+        /* TEK TIKLAMA: seçim yeterli. Mevcut applySelectedWorkMode akışı
+           (loader → enterPublicWorkMode → closeWorkModeModal) aynen çalışır. */
+        if (opt) opt.classList.add('selected');
+        applySelectedWorkMode();
+        return;
+    }
     const pwInput = document.getElementById('wm-password-input');
-    if (mode === 'private' && pwInput) setTimeout(() => pwInput.focus(), 60);
+    if (pwInput) setTimeout(() => { try { pwInput.focus({ preventScroll: true }); } catch (e) { pwInput.focus(); } }, 120);
 }
+
+/* "Geri" düğmesi / kapatma: Private giriş alanını toparlar, kartı kapatır ve
+   hiçbir modu seçili bırakmaz (Geçiş Kapısı'nın ilk hâline döner). */
+function resetWorkModeSelection() {
+    const modal = document.getElementById('work-mode-modal');
+    if (modal) {
+        const privateCard = modal.querySelector('.wm-gate-card--private');
+        if (privateCard) privateCard.classList.remove('wm-open');
+        modal.querySelectorAll('.wm-option').forEach(o => o.classList.remove('selected'));
+    }
+    const pwInput = document.getElementById('wm-password-input');
+    if (pwInput) pwInput.value = '';
+    const err = document.getElementById('wm-error');
+    if (err) { err.textContent = ''; err.style.display = 'none'; }
+    const btn = document.getElementById('wm-continue-btn');
+    if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = 'Private Giriş';
+    }
+}
+
 
 function showWorkModeError(msg) {
     const err = document.getElementById('wm-error');
@@ -12474,7 +12109,7 @@ function applySelectedWorkMode() {
             if (typeof console !== 'undefined' && console.warn) console.warn('[mode] Private giriş doğrulaması başarısız:', err);
         })
         .finally(() => {
-            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i> Devam Et'; }
+            if (btn) { btn.disabled = false; btn.innerHTML = 'Private Giriş'; }
         });
 }
 

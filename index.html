@@ -6,7 +6,7 @@
     <meta name="description" content="Etüt, proje ve saha operasyonlarını tek ekrandan yönetmek için tasarlanmış, tarayıcıda çalışan proje yönetim paneli.">
     <!-- PERF: theme-color — adres çubuğunu uygulama temasıyla eşleştirir.
          Renkler style.css'teki --surface-1 değerleriyle aynıdır (koyu + açık). -->
-    <meta name="theme-color" content="#1e293b" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#04070f" media="(prefers-color-scheme: dark)">
     <meta name="theme-color" content="#f2f8f8" media="(prefers-color-scheme: light)">
     <!-- PERF: favicon ayrı dosya değil, gömülü SVG (data: URI). Ek HTTP isteği yok;
          CSP img-src zaten data:'ya izin veriyor. -->
@@ -61,30 +61,46 @@
          yer değişikliği olmaz; ölçümler aynı kalır. -->
     <div class="notif-popover" id="notif-popover" role="dialog" aria-label="Bugünkü Odak İletileri"></div>
 
-    <!-- AÇILIŞ EKRANI -->
+    <!-- AÇILIŞ EKRANI — CINEMATİK HYPERSPACE LOADER
+         Mod Seçim (Geçiş Kapısı) ekranıyla aynı premium dil: kareli blueprint
+         ızgarası ve köşebent çizimleri YOK; derin lacivert zemin + merkezde
+         nefes alan ambient ışık + 1.5px sinematik ilerleme çizgisi.
+         JS SÖZLEŞMESİ (korunmalı): #splash-loader-bar (width yazar),
+         #splash-status (textContent yazar), #splash-percent-value
+         (textContent + .is-bump). Bu üç id kaldırılırsa loader çalışmaz. -->
     <div id="splash-screen" class="hidden">
-        <div class="splash-corner tl"></div>
-        <div class="splash-corner tr"></div>
-        <div class="splash-corner bl"></div>
-        <div class="splash-corner br"></div>
-        <div class="splash-meta">DRAWING NO: TSK-2026-001 • REV. A</div>
+        <!-- AMBIENT IŞIK: merkezde nefes alan huzme + ince dikey ışık sütunu -->
+        <div class="splash-aurora" aria-hidden="true"></div>
+
+        <!-- KÖŞE TEKNİK ETİKETLERİ: minimalist kalması için %10 opaklıkta -->
+        <div class="splash-meta">ETÜT PROJE YÖNETİM SİSTEMİ</div>
+
         <div class="splash-text-box">
-            <div class="splash-tech-tag">// ETÜT PROJE VE SAHA OPERASYON YÖNETİMİ</div>
+            <div class="splash-tech-tag">ETÜT PROJE VE SAHA OPERASYON YÖNETİMİ</div>
             <div class="splash-title">PROJE YÖNETİM PANELİ</div>
-            <div class="splash-percent" id="splash-percent" aria-live="polite">
-                <span class="pct-value" id="splash-percent-value">0</span><span class="pct-suffix">%</span>
-            </div>
-            <div class="splash-percent-caption">Yükleme İlerlemesi</div>
+
+            <!-- MERKEZ ODAK: 3px sinematik İLERLEME ÇUBUĞU ----------------
+                 Dev yüzde sayacı kaldırıldı: ilerleme artık ekranın tek
+                 kahramanı olan ince, turkuaz parlamalı çubukla okunur. -->
             <div class="splash-loader">
                 <div class="splash-loader-bar" id="splash-loader-bar"></div>
             </div>
-            <div class="splash-loader-row">
-                <span id="splash-loader-pct-inline">0%</span>
-                <span class="bar-end" id="splash-loader-stage">0 / 100</span>
+
+            <!-- DURUM + MİNİK YÜZDE --------------------------------------
+                 Yüzde sahnenin odağı DEĞİL artık: durum metninin sağında
+                 duran küçük bir teknik etiket. Eleman DOM'dan kaldırılmadı;
+                 JS SÖZLEŞMESİ korunuyor:
+                   #splash-status          -> textContent (durum cümlesi)
+                   #splash-percent-value   -> textContent + .is-bump sınıfı -->
+            <div class="splash-status-row">
+                <div class="splash-status" id="splash-status">Sistem başlatılıyor...</div>
+                <div class="splash-percent" id="splash-percent" aria-live="polite">
+                    <span class="pct-value" id="splash-percent-value">0</span><span class="pct-suffix">%</span>
+                </div>
             </div>
-            <div class="splash-status" id="splash-status">Sistem başlatılıyor...</div>
         </div>
-        <div class="splash-meta bottom">© PROJE YÖNETİM PANELİ • BLUEPRINT LOADER v2.0</div>
+
+        <div class="splash-meta bottom">PROJE YÖNETİM PANELİ</div>
     </div>
 
     <!-- AMBIENT LIGHT ORBS -->
@@ -428,37 +444,16 @@
         <!-- VIEW CONTAINER -->
         <div class="view-section-container">
             
-            <!-- VIEW 1: DASHBOARD (tek ekran — kompakt KPI şeridi + 2x2 panel ızgarası) -->
+            <!-- VIEW 1: DASHBOARD (tek ekran — 2x2 panel ızgarası) -->
             <section class="view-section active home-view" id="view-home">
 
-                <!-- KPI GRID: 4 ana kart + tıklanabilir alt-istatistik çipleri.
-                     Çipler updateGlobalKpiSubstats() ile doldurulur; tıklanınca
-                     handleKpiChipClick() üzerinden harita/tablo çapraz filtresini sürer. -->
-                <div class="kpi-grid">
-                    <div class="kpi-card kpi-pastel-1" onclick="navigateToProjectsAll()">
-                        <div class="kpi-top"><span class="kpi-title">TOPLAM İŞ</span><div class="kpi-icon-box"><i class="fa-solid fa-folder-open"></i></div></div>
-                        <div class="kpi-value-box"><span class="kpi-value" id="home-kpi-total">0</span><span class="kpi-badge up" id="home-kpi-total-badge">Yükleniyor…</span></div>
-                        <div class="kpi-substats kpi-loading" id="kpi-substats-total"></div>
-                    </div>
-                    <div class="kpi-card kpi-pastel-2" onclick="navigateTo('active-jobs')">
-                        <div class="kpi-top"><span class="kpi-title">AKTİF İŞLER</span><div class="kpi-icon-box"><i class="fa-solid fa-bolt"></i></div></div>
-                        <div class="kpi-value-box"><span class="kpi-value" id="home-kpi-active">0</span><span class="kpi-badge up" id="home-kpi-active-badge">Odak İşler</span></div>
-                        <div class="kpi-substats kpi-loading" id="kpi-substats-active"></div>
-                    </div>
-                    <div class="kpi-card kpi-pastel-3" onclick="navigateTo('tasks')">
-                        <div class="kpi-top"><span class="kpi-title">BUGÜNÜN İŞLERİ</span><div class="kpi-icon-box"><i class="fa-solid fa-clock"></i></div></div>
-                        <div class="kpi-value-box"><span class="kpi-value" id="home-kpi-today">0</span><span class="kpi-badge warn" id="home-kpi-today-badge">Öncelikli</span></div>
-                        <div class="kpi-substats kpi-loading" id="kpi-substats-today"></div>
-                    </div>
-                    <!-- KART 4: YAPIM — eski "TAMAMLANAN" kartı Yapım odaklına çevrildi.
-                         Ana sayaç = aşaması Yapım olan işler; alt çipler Yapım'ın
-                         EGM/JGK/MSB/DİĞER tür kırılımı (updateGlobalKpiSubstats). -->
-                    <div class="kpi-card kpi-pastel-4" onclick="navigateToProjectsAll()">
-                        <div class="kpi-top"><span class="kpi-title">YAPIM</span><div class="kpi-icon-box"><i class="fa-solid fa-helmet-safety"></i></div></div>
-                        <div class="kpi-value-box"><span class="kpi-value" id="home-kpi-biten">0</span><span class="kpi-badge up" id="home-kpi-biten-badge">%0 Yapımda</span></div>
-                        <div class="kpi-substats kpi-loading" id="kpi-substats-biten"></div>
-                    </div>
-                </div>
+                <!-- SADELSTİRME (kullanıcı talebi): Üst sıradaki 4'lü KPI kartı
+                     (TOPLAM İŞ / AKTİF İŞLER / BUGÜNÜN İŞLERİ / YAPIM) kaldırıldı.
+                     .home-dashboard-grid flex:1 olduğu için harita + Aktif İşler
+                     panelleri boşalan alanı kendiliğinden doldurur. Kartların
+                     sayaç/rozet güncelleyicileri (animateCountUp, updateKpiBadges,
+                     renderKpiChipRow) hedefi bulamadığında sessizce döner; JS
+                     tarafında bu yüzden hiçbir değişiklik gerekmedi. -->
 
                 <!-- 2x2 PANEL IZGARASI SARMALAYICI: harita | aktif işler / veri tamamlama | bugünkü işler.
                      Bu div olmadan paneller #view-home (dikey flex) altında alt alta dizilir. -->
@@ -803,10 +798,6 @@
                                         <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'asama')"><span class="th-filter-label"><span class="dynamic-col-asama">AŞAMA</span></span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
                                         <div class="excel-filter-dropdown" id="dropdown-filter-asama"></div>
                                     </th>
-                                    <th>
-                                        <span class="th-filter-pill" onclick="toggleExcelFilterMenu(event, 'last_timeline')"><span class="th-filter-label">SON TIMELINE NOTU</span> <i class="fa-solid fa-chevron-down th-filter-caret"></i></span>
-                                        <div class="excel-filter-dropdown" id="dropdown-filter-last_timeline"></div>
-                                    </th>
                                     <th style="text-align: center;">İŞLEMLER</th>
                                 </tr>
                             </thead>
@@ -1060,43 +1051,37 @@
                         <div>
                             <h4 style="font-size: 13.2px; color: var(--color-primary); margin-bottom: 6px;"><i class="fa-solid fa-droplet"></i> 1. Ana & Vurgu Renk Paleti</h4>
                             <div class="color-picker-grid">
-                                <div class="color-picker-item"><label>Ana Renk (Primary)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-primary">#3b82f6</span><input type="color" id="picker-color-primary" value="#3b82f6" onchange="updateThemeVariable('--color-primary', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Primary Hover</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-primary-hover">#2563eb</span><input type="color" id="picker-color-primary-hover" value="#2563eb" onchange="updateThemeVariable('--color-primary-hover', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Indigo Vurgu</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-indigo">#6366f1</span><input type="color" id="picker-color-indigo" value="#6366f1" onchange="updateThemeVariable('--color-indigo', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Mor (Purple)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-purple">#8b5cf6</span><input type="color" id="picker-color-purple" value="#8b5cf6" onchange="updateThemeVariable('--color-purple', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Siyan (Cyan)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-cyan">#06b6d4</span><input type="color" id="picker-color-cyan" value="#06b6d4" onchange="updateThemeVariable('--color-cyan', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Yeşil (Emerald)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-emerald">#10b981</span><input type="color" id="picker-color-emerald" value="#10b981" onchange="updateThemeVariable('--color-emerald', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Kehribar (Amber)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-amber">#f59e0b</span><input type="color" id="picker-color-amber" value="#f59e0b" onchange="updateThemeVariable('--color-amber', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Kırmızı (Rose)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-rose">#f43f5e</span><input type="color" id="picker-color-rose" value="#f43f5e" onchange="updateThemeVariable('--color-rose', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Menekşe (Violet)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-violet">#a855f7</span><input type="color" id="picker-color-violet" value="#a855f7" onchange="updateThemeVariable('--color-violet', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Ana Renk (Primary)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-primary">#22d3ee</span><input type="color" id="picker-color-primary" value="#22d3ee" onchange="updateThemeVariable('--color-primary', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Primary Hover</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-primary-hover">#67e8f9</span><input type="color" id="picker-color-primary-hover" value="#67e8f9" onchange="updateThemeVariable('--color-primary-hover', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Indigo Vurgu</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-indigo">#38bdf8</span><input type="color" id="picker-color-indigo" value="#38bdf8" onchange="updateThemeVariable('--color-indigo', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Mor (Purple)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-purple">#5b8cff</span><input type="color" id="picker-color-purple" value="#5b8cff" onchange="updateThemeVariable('--color-purple', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Siyan (Cyan)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-cyan">#22d3ee</span><input type="color" id="picker-color-cyan" value="#22d3ee" onchange="updateThemeVariable('--color-cyan', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Yeşil (Emerald)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-emerald">#2dd4bf</span><input type="color" id="picker-color-emerald" value="#2dd4bf" onchange="updateThemeVariable('--color-emerald', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Kehribar (Amber)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-amber">#fbbf24</span><input type="color" id="picker-color-amber" value="#fbbf24" onchange="updateThemeVariable('--color-amber', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Kırmızı (Rose)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-rose">#fb7185</span><input type="color" id="picker-color-rose" value="#fb7185" onchange="updateThemeVariable('--color-rose', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Menekşe (Violet)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-color-violet">#8b9dff</span><input type="color" id="picker-color-violet" value="#8b9dff" onchange="updateThemeVariable('--color-violet', this.value)"></div></div>
                             </div>
                         </div>
 
                         <div>
                             <h4 style="font-size: 13.2px; color: var(--color-primary); margin-bottom: 6px;"><i class="fa-solid fa-layer-group"></i> 2. Arka Plan, Cam Yüzey ve Metin Renkleri</h4>
                             <div class="color-picker-grid">
-                                <div class="color-picker-item"><label>Uygulama Arka Planı</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-app-bg">#0f172a</span><input type="color" id="picker-app-bg" value="#0f172a" onchange="updateThemeVariable('--app-bg', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Panel Yüzeyi (Surface 1)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-surface-1">#1e293b</span><input type="color" id="picker-surface-1" value="#1e293b" onchange="updateThemeVariable('--surface-1', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Cam Sınır Çizgisi</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-surface-border">#334155</span><input type="color" id="picker-surface-border" value="#334155" onchange="updateThemeVariable('--surface-border', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Cam Güçlü Çerçeve</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-surface-border-strong">#475569</span><input type="color" id="picker-surface-border-strong" value="#475569" onchange="updateThemeVariable('--surface-border-strong', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Ana Metin Rengi</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-txt-main">#f8fafc</span><input type="color" id="picker-txt-main" value="#f8fafc" onchange="updateThemeVariable('--txt-main', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Alt Metin Rengi</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-txt-sub">#cbd5e1</span><input type="color" id="picker-txt-sub" value="#cbd5e1" onchange="updateThemeVariable('--txt-sub', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Silik Metin Rengi</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-txt-muted">#94a3b8</span><input type="color" id="picker-txt-muted" value="#94a3b8" onchange="updateThemeVariable('--txt-muted', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Girdi Kutusu Zemin</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-input-bg">#0f172a</span><input type="color" id="picker-input-bg" value="#0f172a" onchange="updateThemeVariable('--input-bg', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Uygulama Arka Planı</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-app-bg">#04070f</span><input type="color" id="picker-app-bg" value="#04070f" onchange="updateThemeVariable('--app-bg', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Panel Yüzeyi (Surface 1)</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-surface-1">#0a1220</span><input type="color" id="picker-surface-1" value="#0a1220" onchange="updateThemeVariable('--surface-1', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Cam Sınır Çizgisi</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-surface-border">#16263c</span><input type="color" id="picker-surface-border" value="#16263c" onchange="updateThemeVariable('--surface-border', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Cam Güçlü Çerçeve</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-surface-border-strong">#22374f</span><input type="color" id="picker-surface-border-strong" value="#22374f" onchange="updateThemeVariable('--surface-border-strong', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Ana Metin Rengi</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-txt-main">#eef6fb</span><input type="color" id="picker-txt-main" value="#eef6fb" onchange="updateThemeVariable('--txt-main', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Alt Metin Rengi</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-txt-sub">#b9cddb</span><input type="color" id="picker-txt-sub" value="#b9cddb" onchange="updateThemeVariable('--txt-sub', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Silik Metin Rengi</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-txt-muted">#7f97a8</span><input type="color" id="picker-txt-muted" value="#7f97a8" onchange="updateThemeVariable('--txt-muted', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Girdi Kutusu Zemin</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-input-bg">#060d18</span><input type="color" id="picker-input-bg" value="#060d18" onchange="updateThemeVariable('--input-bg', this.value)"></div></div>
                             </div>
                         </div>
 
                         <div>
-                            <h4 style="font-size: 13.2px; color: var(--color-primary); margin-bottom: 6px;"><i class="fa-solid fa-chart-line"></i> 3. KPI Kartları ve Rozet Renkleri</h4>
+                            <h4 style="font-size: 13.2px; color: var(--color-primary); margin-bottom: 6px;"><i class="fa-solid fa-flag"></i> 3. Önemli Görev (Öncelikli İş) Renkleri</h4>
                             <div class="color-picker-grid">
-                                <div class="color-picker-item"><label>Toplam KPI Zemin</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-kpi-total-bg">#1e3a5f</span><input type="color" id="picker-kpi-total-bg" value="#1e3a5f" onchange="updateThemeVariable('--kpi-total-bg', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Toplam KPI Çerçeve</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-kpi-total-border">#3b82f6</span><input type="color" id="picker-kpi-total-border" value="#3b82f6" onchange="updateThemeVariable('--kpi-total-border', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Aktif KPI Zemin</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-kpi-active-bg">#453414</span><input type="color" id="picker-kpi-active-bg" value="#453414" onchange="updateThemeVariable('--kpi-active-bg', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Aktif KPI Çerçeve</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-kpi-active-border">#eab308</span><input type="color" id="picker-kpi-active-border" value="#eab308" onchange="updateThemeVariable('--kpi-active-border', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Bugünkü KPI Zemin</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-kpi-today-bg">#3b2046</span><input type="color" id="picker-kpi-today-bg" value="#3b2046" onchange="updateThemeVariable('--kpi-today-bg', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Bugünkü KPI Çerçeve</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-kpi-today-border">#a855f7</span><input type="color" id="picker-kpi-today-border" value="#a855f7" onchange="updateThemeVariable('--kpi-today-border', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Biten KPI Zemin</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-kpi-done-bg">#154336</span><input type="color" id="picker-kpi-done-bg" value="#154336" onchange="updateThemeVariable('--kpi-done-bg', this.value)"></div></div>
-                                <div class="color-picker-item"><label>Biten KPI Çerçeve</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-kpi-done-border">#22c55e</span><input type="color" id="picker-kpi-done-border" value="#22c55e" onchange="updateThemeVariable('--kpi-done-border', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Bugünkü KPI Zemin</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-kpi-today-bg">#1b2140</span><input type="color" id="picker-kpi-today-bg" value="#1b2140" onchange="updateThemeVariable('--kpi-today-bg', this.value)"></div></div>
+                                <div class="color-picker-item"><label>Bugünkü KPI Çerçeve</label><div class="color-picker-input-wrapper"><span class="color-hex-text" id="hex-kpi-today-border">#8b9dff</span><input type="color" id="picker-kpi-today-border" value="#8b9dff" onchange="updateThemeVariable('--kpi-today-border', this.value)"></div></div>
                             </div>
                         </div>
 
@@ -1311,7 +1296,6 @@
 </div>
 
 <div class="map-tooltip" id="map-tooltip"></div>
-<div class="kpi-chip-tip" id="kpi-chip-tip"></div>
 <div class="experts-hover-tooltip" id="experts-hover-tooltip"></div>
 
 <!-- DOSYA MODALI -->
@@ -1385,8 +1369,8 @@
                     <span class="ntb-sep"></span>
                     <label class="ntb-color" title="Seçili metnin rengini değiştir">
                         <i class="fa-solid fa-droplet"></i>
-                        <span class="ntb-color-swatch" id="note-text-color-swatch" style="background:#3b82f6;"></span>
-                        <input type="color" id="note-text-color" value="#3b82f6">
+                        <span class="ntb-color-swatch" id="note-text-color-swatch" style="background:#22d3ee;"></span>
+                        <input type="color" id="note-text-color" value="#22d3ee">
                     </label>
                     <button type="button" class="ntb-btn" data-cmd="removeFormat" title="Biçimi temizle"><i class="fa-solid fa-eraser"></i></button>
                     <button type="button" class="ntb-btn" data-cmd="hiliteColor" data-arg="transparent" title="Vurgu / arka plan rengi"><i class="fa-solid fa-highlighter"></i></button>
@@ -1654,9 +1638,9 @@
         position: fixed; inset: 0; z-index: 100000;
         display: flex; align-items: center; justify-content: center;
         padding: 16px;
-        background: rgba(8, 12, 24, 0.62);
-        backdrop-filter: blur(25px) saturate(150%);
-        -webkit-backdrop-filter: blur(25px) saturate(150%);
+        background: rgba(2, 6, 14, 0.66);
+        backdrop-filter: blur(26px) saturate(150%);
+        -webkit-backdrop-filter: blur(26px) saturate(150%);
         opacity: 0; pointer-events: none;
         transition: opacity var(--transition-normal);
     }
@@ -1664,85 +1648,173 @@
     #zk-lock-overlay.active { opacity: 1; pointer-events: auto; }
 
     #zk-lock-card {
+        position: relative;
         width: 100%; max-width: 400px;
-        background: var(--surface-1);
+        /* BUZLU CAM: koyu temada lacivert cam, açık temada tema camı
+           (var(--surface-glass)). Kenarda ince turkuaz ışık + dışa taşan
+           cyan glow; üstte eriyen ışık dikişi (::before). */
+        background: var(--surface-glass);
         background-image: var(--glass-reflection);
-        border: var(--edge-subtle);
-        border-radius: var(--app-radius);
-        backdrop-filter: blur(20px) saturate(180%);
-        -webkit-backdrop-filter: blur(20px) saturate(180%);
-        box-shadow: var(--shadow-xl), var(--elev-3);
-        padding: 26px 22px 20px;
+        border: 1px solid rgba(34, 211, 238, 0.22);
+        border-radius: 18px;
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
+        box-shadow:
+            0 0 0 1px rgba(34, 211, 238, 0.10),
+            0 0 42px rgba(34, 211, 238, 0.14),
+            0 24px 64px rgba(0, 0, 0, 0.55);
         color: var(--txt-main);
-        display: flex; flex-direction: column; gap: 12px;
-        transform: scale(0.96) translateY(6px);
+        overflow: hidden;
+        transform: scale(0.96) translateY(8px);
         transition: transform var(--transition-bounce);
     }
     #zk-lock-overlay.active #zk-lock-card { transform: none; }
+    /* Üst kenarda eriyen cyan ışık dikişi. */
+    #zk-lock-card::before {
+        content: '';
+        position: absolute; top: 0; left: 12%; right: 12%; height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(103, 232, 249, 0.75) 50%, transparent);
+        pointer-events: none;
+    }
+
+    /* Sağ üst köşe: zarif, yarı saydam X. ESC ile aynı işi yapar. */
+    .zk-lock-close {
+        position: absolute; top: 9px; right: 9px; z-index: 3;
+        width: 28px; height: 28px; border-radius: 9px;
+        display: flex; align-items: center; justify-content: center;
+        background: transparent; border: 1px solid transparent; padding: 0;
+        color: var(--txt-muted); font-size: 13px; cursor: pointer;
+        transition: color var(--transition-fast), border-color var(--transition-fast),
+                    background-color var(--transition-fast), box-shadow var(--transition-fast);
+    }
+    .zk-lock-close:hover {
+        color: var(--color-primary);
+        border-color: rgba(34, 211, 238, 0.38);
+        background: rgba(34, 211, 238, 0.10);
+        box-shadow: 0 0 12px rgba(34, 211, 238, 0.22);
+    }
+    .zk-lock-close:focus-visible { outline: none; border-color: var(--color-primary); }
 
     .zk-lock-badge {
-        width: 46px; height: 46px; border-radius: 50%;
+        width: 46px; height: 46px; border-radius: 14px;
         display: flex; align-items: center; justify-content: center;
-        background: var(--surface-glass); border: var(--edge-default);
+        background: rgba(34, 211, 238, 0.08);
+        border: 1px solid rgba(34, 211, 238, 0.30);
         color: var(--color-primary); font-size: 19px;
-        box-shadow: var(--elev-2);
+        box-shadow: 0 0 18px rgba(34, 211, 238, 0.18), inset 0 0 12px rgba(34, 211, 238, 0.08);
     }
-    .zk-lock-title { font-family: var(--font-family-heading); font-size: 17px; font-weight: 800; letter-spacing: 0.2px; }
-    .zk-lock-desc { font-size: 11.8px; line-height: 1.55; color: var(--txt-muted); margin: 0; }
+    .zk-lock-title {
+        font-family: var(--font-family-heading);
+        font-size: 13.4px; font-weight: 700;
+        letter-spacing: 0.16em; text-transform: uppercase;
+        color: var(--txt-main);
+    }
+    .zk-lock-desc { font-size: 11.8px; line-height: 1.55; color: var(--txt-muted); margin: 4px 0 0; }
     .zk-lock-field { display: flex; flex-direction: column; gap: 5px; }
     .zk-lock-field label { font-size: 10.6px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: var(--txt-sub); }
     .zk-lock-field input {
-        width: 100%; height: 34px; padding: 0 10px;
-        background: var(--input-bg); color: var(--txt-main);
-        border: 1px solid var(--surface-border); border-radius: var(--radius-sm);
-        font-family: var(--font-family-base); font-size: var(--font-size-base);
-        outline: none; transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+        width: 100%; height: 38px; padding: 0 12px;
+        /* TRANSPARAN INPUT: cam kartın üzerinde cam alan. Odakta cyan
+           kenar + disari tasan parlama (Deep Navy & Cyan Glow dili). */
+        background: transparent; color: var(--txt-main);
+        border: 1px solid rgba(148, 180, 202, 0.28); border-radius: 10px;
+        font-family: var(--font-family-base); font-size: 13.4px; letter-spacing: 0.3px;
+        outline: none;
+        transition: border-color var(--transition-fast), box-shadow var(--transition-fast),
+                    background-color var(--transition-fast);
     }
     .zk-lock-field input::placeholder { color: var(--txt-muted); }
+    .zk-lock-field input:hover { border-color: rgba(34, 211, 238, 0.38); }
     .zk-lock-field input:focus {
         border-color: var(--color-primary);
-        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.22);
+        background: rgba(34, 211, 238, 0.05);
+        box-shadow:
+            0 0 0 1px rgba(34, 211, 238, 0.35),
+            0 0 18px rgba(34, 211, 238, 0.22);
     }
     .zk-lock-error { font-size: 11.4px; font-weight: 700; color: var(--color-rose); min-height: 15px; margin: 0; }
     .zk-lock-submit {
         width: 100%;
-        height: 36px; border-radius: var(--radius-sm); cursor: pointer;
-        background: var(--color-primary); color: #fff; border: 1px solid var(--surface-border-strong);
-        font-family: var(--font-family-heading); font-size: 12.6px; font-weight: 700;
-        letter-spacing: 0.3px; display: flex; align-items: center; justify-content: center; gap: 7px;
-        transition: filter var(--transition-fast), transform var(--transition-fast);
+        height: 40px; border-radius: 10px; cursor: pointer;
+        /* TURKUAZ PARLAYAN ANA BUTON: cyan pill + koyu mürekkep (--on-accent),
+           hover'da parlaklik artar ve glow büyür. */
+        background: var(--brand-gradient); color: var(--on-accent);
+        border: 1px solid rgba(103, 232, 249, 0.55);
+        font-family: var(--font-family-heading); font-size: 12.8px; font-weight: 800;
+        letter-spacing: 0.9px; text-transform: uppercase;
+        display: flex; align-items: center; justify-content: center; gap: 8px;
+        box-shadow:
+            0 0 0 1px rgba(34, 211, 238, 0.22),
+            0 0 22px rgba(34, 211, 238, 0.35),
+            inset 0 1px 0 rgba(255, 255, 255, 0.28);
+        text-shadow: none;
+        transition: filter var(--transition-fast), box-shadow var(--transition-fast),
+                    transform var(--transition-fast), border-color var(--transition-fast);
     }
-    .zk-lock-submit:hover:not(:disabled) { filter: brightness(1.08); }
+    .zk-lock-submit:hover:not(:disabled) {
+        filter: brightness(1.1);
+        border-color: rgba(165, 243, 252, 0.85);
+        box-shadow:
+            0 0 0 1px rgba(34, 211, 238, 0.45),
+            0 0 34px rgba(34, 211, 238, 0.5),
+            inset 0 1px 0 rgba(255, 255, 255, 0.34);
+    }
     .zk-lock-submit:active:not(:disabled) { transform: translateY(1px); }
     .zk-lock-submit:disabled { opacity: 0.55; cursor: progress; }
-    .zk-lock-submit:focus-visible { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.45); }
-
-    .zk-lock-foot {
-        font-size: 10.4px; line-height: 1.5; color: var(--txt-muted);
-        border-top: var(--edge-subtle); padding-top: 10px; margin: 2px 0 0;
+    .zk-lock-submit:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.55), 0 0 30px rgba(34, 211, 238, 0.4);
     }
-    .zk-lock-foot b { color: var(--txt-sub); font-weight: 700; }
-    .zk-lock-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; }
+
+    /* TECH ROZETLERI: yalnizca Payloader/shieldhacker algiyi veren, cok kucuk
+       ve yari saydam teknik rozetler. Secilemez (user-select:none). */
+    .zk-lock-chips {
+        display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 0;
+        justify-content: center;
+    }
     .zk-lock-chip {
-        font-family: var(--font-family-hacker); font-size: 9.6px; letter-spacing: 0.3px;
-        color: var(--txt-sub); background: var(--surface-glass);
-        border: var(--edge-subtle); border-radius: 999px; padding: 2px 8px;
+        font-family: var(--font-family-hacker); font-size: 9.4px; letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: rgba(165, 229, 244, 0.60);
+        background: rgba(34, 211, 238, 0.055);
+        border: 1px solid rgba(34, 211, 238, 0.16);
+        border-radius: 999px; padding: 2.5px 9px;
+        user-select: none;
+        transition: color var(--transition-fast), border-color var(--transition-fast),
+                    box-shadow var(--transition-fast);
+    }
+    .zk-lock-chip:hover {
+        color: rgba(165, 229, 244, 0.95);
+        border-color: rgba(34, 211, 238, 0.42);
+        box-shadow: 0 0 10px rgba(34, 211, 238, 0.18);
+    }
+    /* Açık tema: pastel zeminde yari saydam cyan okunmaz; tema mürekkebine döner. */
+    [data-theme="light"] .zk-lock-chip {
+        color: var(--txt-muted); background: var(--surface-glass); border: var(--edge-subtle);
     }
     @media (prefers-reduced-motion: reduce) {
         #zk-lock-overlay, #zk-lock-card { transition: none; }
     }
 </style>
 
-<div class="modal-overlay" id="zk-lock-overlay" style="z-index:100000; opacity:0; pointer-events:none;" aria-hidden="true">
+<div class="modal-overlay" id="zk-lock-overlay" style="z-index:100000; opacity:0; pointer-events:none;" aria-hidden="true"
+     onclick="zkOverlayDismiss(event)">
     <div class="modal-card" id="zk-lock-card"
-         style="max-width:400px; background:var(--surface-1); background-image:var(--glass-reflection); backdrop-filter:blur(20px) saturate(180%); -webkit-backdrop-filter:blur(20px) saturate(180%); border:var(--edge-subtle); border-radius:var(--app-radius);"
+         style="max-width:400px; background:var(--surface-glass); background-image:var(--glass-reflection); backdrop-filter:blur(24px) saturate(180%); -webkit-backdrop-filter:blur(24px) saturate(180%); border:1px solid rgba(34,211,238,0.22); border-radius:18px;"
          onclick="event.stopPropagation();">
+        <!-- Sağ üst köşe: yarı saydam X. ESC ile aynı işi görür
+             (zkRequestClose → zkHideLock). -->
+        <button type="button" class="zk-lock-close" id="zk-lock-close" aria-label="Kapat (ESC)"
+                onclick="zkRequestClose()" tabindex="0">
+            <i class="fa-solid fa-xmark"></i>
+        </button>
         <div style="display:flex; flex-direction:column; gap:12px; padding:26px 22px 20px;">
             <div class="zk-lock-badge" aria-hidden="true"><i class="fa-solid fa-shield-halved"></i></div>
             <div>
                 <h3 class="zk-lock-title" id="zk-lock-title">Uygulama Kilidi</h3>
+                <!-- KISA AÇIKLAMA: uzun güvenlik anlatısı kaldırıldı; JS
+                     zkShowLock() bu satırı mode'a göre kendisi yazar. -->
                 <p class="zk-lock-desc" id="zk-lock-desc">
-                    Verileriniz bu tarayıcıda <b>AES-256-GCM</b> ile şifrelenerek saklanır.
                     Devam etmek için Master Parola gerekir.
                 </p>
             </div>
@@ -1764,18 +1836,14 @@
                 </button>
             </form>
 
+            <!-- TECH ROZETLERİ: şifreleme parametreleri artık yalnızca bu
+                 minik, yarı saydam rozetlerde sergilenir. -->
             <div class="zk-lock-chips" aria-label="Kullanılan şifreleme parametreleri">
                 <span class="zk-lock-chip">PBKDF2-SHA256</span>
                 <span class="zk-lock-chip">100.000 iterasyon</span>
                 <span class="zk-lock-chip">AES-256-GCM</span>
                 <span class="zk-lock-chip">Rastgele IV + Salt</span>
             </div>
-
-            <p class="zk-lock-foot">
-                <b>Sıfır Bilgi (Zero-Knowledge):</b> Parolanız hiçbir sunucuya gönderilmez ve
-                tarayıcı belleğinde (RAM) tutulur; <b>localStorage'a düz metin olarak asla yazılmaz.</b>
-                Parolayı unutursanız verilerinize ulaşmanın teknik bir yolu yoktur.
-            </p>
         </div>
     </div>
 </div>
@@ -1813,7 +1881,7 @@
     .work-mode-badge.wm-private {
         background: rgba(16, 185, 129, 0.14);
         border: 1px solid rgba(16, 185, 129, 0.45);
-        color: var(--color-emerald, #10b981);
+        color: var(--color-emerald, #2dd4bf);
         box-shadow: 0 0 12px rgba(16, 185, 129, 0.18);
     }
     .work-mode-badge.wm-private:hover { background: rgba(16, 185, 129, 0.22); }
@@ -1825,180 +1893,546 @@
     }
 </style>
 
-<!-- MOD SEÇİM MODALI: mevcut .modal-overlay/.modal-card cam dilini kullanır.
-     BAŞLIK BÖLGESİ: "Nasıl çalışmak istersiniz?" sorusu ve açıklama paragrafı
-     kaldırıldı; kart açıklamaları yeterli. Yerine Kinetik Tipografi efektli
-     büyük karşılama başlığı geldi (JS: initKineticWelcomeTitle). -->
-<div class="modal-overlay" id="work-mode-modal" onclick="if (event.target === this) closeWorkModeModal()">
-    <div class="modal-card wm-modal-card">
-        <div class="modal-header wm-modal-header">
-            <div class="wm-modal-title-box">
-                <div class="wm-welcome-eyebrow">ETÜT PROJE YÖNETİM SİSTEMİ</div>
-                <h2 class="wm-welcome-title" id="wm-welcome-title" aria-label="PROJE YÖNETİM PANELİNE HOŞ GELDİNİZ"></h2>
-            </div>
-            <button class="wm-modal-close" onclick="closeWorkModeModal()" title="Kapat" aria-label="Kapat"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        <div class="modal-body wm-modal-body">
-            <div class="wm-option wm-option-public selected" data-mode="public" onclick="selectWorkModeOption('public', event)">
-                <div class="wm-option-icon wm-icon-public"><i class="fa-solid fa-lock-open"></i></div>
-                <div class="wm-option-text">
-                    <div class="wm-option-title">Public <span class="wm-option-tag">Yerel Çalışma</span></div>
-                    <div class="wm-option-desc">Parola gerekmez. Eklemeler, güncellemeler ve silmeler yalnızca bu tarayıcıda tutulur; bulut senkronizasyonu kapalıdır.</div>
+<!-- GEÇİŞ KAPISI (GATEWAY) — PUBLIC / PRIVATE
+     Klasik modal kabuğu (gri kart + kapatma çarpısı + "Nasıl çalışmak
+     istersiniz?" başlığı + uzun açıklama) TAMAMEN kaldırıldı. Öğeler doğrudan
+     koyu arka plan üzerinde süzülür; arkada nefes alan ambient ışık vardır.
+     · PUBLIC  → karta tek tıkla ANINDA geçilir (onay adımı yok).
+     · PRIVATE → kart aşağı doğru genişler ve Master Parola / TOTP alanı
+       kartın İÇİNDE fade-in ile belirir; kimlik doğrulanmadan mod değişmez.
+     · Her iki yolda da yükleme ekranı (splash) seçimden/doğrulamadan SONRA
+       devreye girer (applySelectedWorkMode → startSplashLoaderOnce).
+     JS DOM SÖZLEŞMESİ (değiştirmeyin): #work-mode-modal, #wm-welcome-title,
+     #wm-password-wrap, #wm-password-input, #wm-error, #wm-continue-btn,
+     #wm-modal-footer, .wm-option[data-mode]. -->
+<div class="modal-overlay wm-mode-overlay" id="work-mode-modal" onclick="if (event.target === this) closeWorkModeModal()">
+    <div class="wm-gate">
+        <!-- AMBIENT IŞIK: arkada nefes alan iki yumuşak küre. -->
+        <div class="wm-gate-aurora" aria-hidden="true"></div>
+
+        <!-- KAHRAMAN ALAN: kinetik başlık (JS: initKineticWelcomeTitle). -->
+        <header class="wm-welcome-hero">
+            <div class="wm-welcome-eyebrow">ETÜT PROJE YÖNETİM SİSTEMİ</div>
+            <h2 class="wm-welcome-title" id="wm-welcome-title" aria-label="PROJE YÖNETİM PANELİNE HOŞ GELDİNİZ"></h2>
+        </header>
+
+        <div class="wm-gate-grid">
+            <!-- PUBLIC: monitör ikonu, gümüş hover parlaması. -->
+            <div class="wm-option wm-gate-card wm-gate-card--public" data-mode="public"
+                 role="button" tabindex="0" aria-label="Public — Yerel Çalışma Alanı"
+                 onclick="selectWorkModeOption('public', event)"
+                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectWorkModeOption('public',event);}">
+                <div class="wm-gate-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                        <rect x="2.5" y="4" width="19" height="12.6" rx="2.2"></rect>
+                        <path d="M8.3 20.4h7.4"></path>
+                        <path d="M12 16.6v3.8"></path>
+                    </svg>
                 </div>
-                <i class="fa-solid fa-circle-check wm-option-check"></i>
+                <div class="wm-gate-name">PUBLIC</div>
+                <div class="wm-gate-sub">Yerel Çalışma Alanı</div>
             </div>
-            <div class="wm-option wm-option-private" data-mode="private" onclick="selectWorkModeOption('private', event)">
-                <div class="wm-option-icon wm-icon-private"><i class="fa-solid fa-lock"></i></div>
-                <div class="wm-option-text">
-                    <div class="wm-option-title">Private <span class="wm-option-tag wm-tag-private">Bulut / Yönetici Girişi</span></div>
-                    <div class="wm-option-desc">Master Parola sorulur. Doğru parolada bulut (Upstash) verisi yüklenir ve tüm değişiklikler buluta yazılır.</div>
+
+            <!-- PRIVATE: bulut + kilit ikonu, cyan aura; tıklanınca genişler. -->
+            <div class="wm-option wm-gate-card wm-gate-card--private" data-mode="private"
+                 role="button" tabindex="0" aria-label="Private — Bulut Senkronizasyonu"
+                 onclick="selectWorkModeOption('private', event)"
+                 onkeydown="if(event.key==='Enter'&&!event.target.closest('input,button')){event.preventDefault();selectWorkModeOption('private',event);}">
+                <div class="wm-gate-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                        <path d="M6.6 17.4a4 4 0 0 1 .5-7.97 5.4 5.4 0 0 1 10.35 1.3 3.55 3.55 0 0 1-.4 7.07"></path>
+                        <rect x="9.1" y="14.1" width="5.8" height="4.7" rx="1.15"></rect>
+                        <path d="M10.4 14.1v-1.15a1.6 1.6 0 0 1 3.2 0v1.15"></path>
+                    </svg>
                 </div>
-                <i class="fa-solid fa-circle-check wm-option-check"></i>
+                <div class="wm-gate-name">PRIVATE</div>
+                <div class="wm-gate-sub">Bulut Senkronizasyonu</div>
+
+                <!-- AÇILIR ALAN: 0fr → 1fr ile yumuşak yükseklik geçişi.
+                     stopPropagation: içerideki tıklamalar kartın onclick'ine
+                     ulaşmaz (aksi hâlde "Geri" kartı yeniden açardı). -->
+                <div class="wm-gate-reveal">
+                    <div class="wm-gate-reveal-inner" onclick="event.stopPropagation()">
+                        <div class="wm-password-wrap" id="wm-password-wrap">
+                            <label class="wm-pw-label" for="wm-password-input">MASTER PAROLA / 6 HANELİ KOD</label>
+                            <input type="password" id="wm-password-input" class="wm-pw-input" autocomplete="off"
+                                   spellcheck="false" placeholder="Master parola veya 6 haneli kod"
+                                   onkeydown="handleWorkModePasswordKeydown(event)">
+                            <p class="wm-error" id="wm-error" role="alert" style="display:none;"></p>
+                        </div>
+                        <div class="wm-modal-footer" id="wm-modal-footer">
+                            <button class="btn btn-secondary wm-gate-btn" type="button" onclick="resetWorkModeSelection()">
+                                Geri
+                            </button>
+                            <button class="btn btn-primary wm-gate-btn" id="wm-continue-btn" type="button" onclick="applySelectedWorkMode()">
+                                Private Giriş
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="wm-password-wrap" id="wm-password-wrap" style="display:none;">
-                <label class="wm-pw-label" for="wm-password-input">MASTER PAROLA VEYA 6 HANELİ KOD</label>
-                <input type="password" id="wm-password-input" class="wm-pw-input" autocomplete="off"
-                       placeholder="Master Parola veya 6 Haneli Kod" onkeydown="handleWorkModePasswordKeydown(event)">
-                <p class="wm-pw-hint">Uzun parolanız <b>veya</b> Google Authenticator'daki 6 haneli kodunuzla giriş yapabilirsiniz. Kimlik yalnızca doğrulama anında sunucuya iletilir; tarayıcıda saklanmaz.</p>
-            </div>
-            <p class="wm-error" id="wm-error" role="alert" style="display:none;"></p>
-        </div>
-        <div class="modal-footer wm-modal-footer">
-            <button class="btn btn-secondary" onclick="closeWorkModeModal()">Vazgeç</button>
-            <button class="btn btn-primary" id="wm-continue-btn" onclick="applySelectedWorkMode()">
-                <i class="fa-solid fa-arrow-right-to-bracket"></i> Devam Et
-            </button>
         </div>
     </div>
 </div>
+
 <style id="work-mode-modal-styles">
+    /* ======================================================================
+       GEÇİŞ KAPISI (GATEWAY) — PREMİUM / MİNİMALİST / FÜTÜRİSTİK
+       ----------------------------------------------------------------------
+       Klasik modal kabuğu YOK: gri .modal-card yüzeyi, kapatma çarpısı,
+       "Nasıl çalışmak istersiniz?" başlığı ve uzun açıklama metni kaldırıldı.
+       Öğeler doğrudan koyu zemin üzerinde süzülür; arkada nefes alan ambient
+       ışık (aurora) vardır. Yeni DOM: .wm-gate > .wm-gate-aurora +
+       .wm-welcome-hero + .wm-gate-grid > .wm-gate-card × 2.
+       ====================================================================== */
     #work-mode-modal { z-index: 100500; }
+
     /* AÇILIŞ KAPISI: mod seçilene kadar dashboard TAMAMEN gizli kalır.
        visibility (display değil) seçildi: harita/tablo ölçüleri gizliyken
        de alınmaya devam eder, arka planda yapılan render bozulmaz. */
     body.wm-gate-active .app-layout { visibility: hidden; }
-    #work-mode-modal .wm-modal-card { max-width: 560px; width: 100%; }
-    .wm-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-    /* PREMIUM KARŞILAMA BAŞLIĞI
-       İlk intiba: başlığın tamamına yayılan TEK sürekli gradient dolgu
-       (background-clip:text), yumuşak neon hale, harf harf yükselerek gelen
-       giriş animasyonu ve soldan çizilen neon alt ray. Kinetik hover dalgası
-       (JS: wm-kin-up) korunur; harf artık dolgu rengiyle parlar. */
-    .wm-modal-title-box { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+    /* OVERLAY: kart yok, yalnızca çok katmanlı koyu bir atmosfer. */
+    #work-mode-modal.wm-mode-overlay {
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: 0;
+        padding: 40px 22px;
+        background:
+            radial-gradient(1100px 620px at 50% -10%, rgba(56, 189, 248, 0.10), transparent 62%),
+            radial-gradient(900px 520px at 15% 108%, rgba(99, 102, 241, 0.10), transparent 60%),
+            rgba(7, 11, 20, 0.90);
+        backdrop-filter: blur(22px) saturate(130%);
+        -webkit-backdrop-filter: blur(22px) saturate(130%);
+    }
+    [data-theme="light"] #work-mode-modal.wm-mode-overlay {
+        background:
+            radial-gradient(1100px 620px at 50% -10%, rgba(14, 165, 233, 0.14), transparent 62%),
+            radial-gradient(900px 520px at 12% 108%, rgba(99, 102, 241, 0.12), transparent 60%),
+            rgba(241, 245, 249, 0.94);
+    }
+
+    /* GEÇİŞ KAPISI GÖVDESİ: kart değil — boşlukta duran bir sahne. */
+    .wm-gate {
+        position: relative;
+        width: 100%;
+        max-width: 920px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: clamp(30px, 4.2vw, 52px);
+    }
+
+    /* AMBIENT IŞIK: iki yumuşak küre, çok yavaş nefes alır. */
+    .wm-gate-aurora {
+        position: absolute;
+        inset: -18% -12% auto -12%;
+        height: 78%;
+        pointer-events: none;
+        z-index: 0;
+        background:
+            radial-gradient(closest-side, rgba(148, 163, 184, 0.20), transparent 72%) 22% 34% / 42% 78% no-repeat,
+            radial-gradient(closest-side, rgba(34, 211, 238, 0.20), transparent 72%) 78% 62% / 46% 84% no-repeat;
+        filter: blur(52px);
+        animation: wmAuroraBreathe 13s ease-in-out infinite;
+    }
+    [data-theme="light"] .wm-gate-aurora {
+        background:
+            radial-gradient(closest-side, rgba(100, 116, 139, 0.20), transparent 72%) 22% 34% / 42% 78% no-repeat,
+            radial-gradient(closest-side, rgba(8, 145, 178, 0.22), transparent 72%) 78% 62% / 46% 84% no-repeat;
+    }
+    @keyframes wmAuroraBreathe {
+        0%, 100% { opacity: 0.62; transform: scale(1) translateY(0); }
+        50%      { opacity: 1;    transform: scale(1.06) translateY(-8px); }
+    }
+
+    /* --- KAHRAMAN ALAN: kinetik baslik --- */
+
+    .wm-welcome-hero {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        text-align: center;
+        width: 100%;
+        flex-shrink: 0;
+    }
     .wm-welcome-eyebrow {
-        display: inline-flex; align-items: center; gap: 7px;
+        display: inline-flex; align-items: center; gap: 8px;
         font-family: var(--font-family-hacker);
-        font-size: 9.2px; font-weight: 700; letter-spacing: 3.2px;
+        font-size: 9.2px; font-weight: 700; letter-spacing: 3.4px;
         text-transform: uppercase; color: var(--txt-muted);
         animation: wmEyebrowIn 0.55s ease 0.06s both;
     }
     .wm-welcome-eyebrow::before {
-        content: ''; width: 6px; height: 6px; border-radius: 50%;
-        background: var(--color-cyan, #06b6d4);
-        box-shadow: 0 0 9px 2px rgba(6, 182, 212, 0.7);
+        content: ''; width: 5px; height: 5px; border-radius: 50%;
+        background: var(--color-cyan, #22d3ee);
+        box-shadow: 0 0 9px 2px rgba(6, 182, 212, 0.65);
         animation: wmEyebrowPulse 2.6s ease-in-out infinite;
     }
+    /* ZARIF TIPOGRAFI: bold degil — ince (300), genis harf araligi. */
     .wm-welcome-title {
         position: relative;
         font-family: var(--font-family-heading);
-        font-size: clamp(18px, 2.8vw, 23px);
-        font-weight: 900;
-        letter-spacing: 1.1px;
-        line-height: 1.22;
+        font-size: clamp(22px, 3.7vw, 42px);
+        font-weight: 300;
+        letter-spacing: 0.155em;
+        line-height: 1.24;
         text-transform: uppercase;
         margin: 0;
-        padding-bottom: 11px;
-        background-image: linear-gradient(100deg, #60a5fa 0%, #a78bfa 26%, #22d3ee 50%, #818cf8 74%, #60a5fa 100%);
-        background-size: 260% 100%;
-        background-position: 0% 50%;
-        -webkit-background-clip: text;
-        background-clip: text;
-        color: transparent;
-        -webkit-text-fill-color: transparent;
-        filter: drop-shadow(0 0 15px rgba(59, 130, 246, 0.34));
-        animation: wmTitleShimmer 7.5s ease-in-out infinite;
+        filter: drop-shadow(0 0 26px rgba(56, 189, 248, 0.22));
     }
+    /* ALT CIZGI KALDIRILDI: sert beyaz cizgi yerine, kenarlari tamamen
+       eriyen yumusak bir isik huzmesi. */
     .wm-welcome-title::after {
-        content: ''; position: absolute; left: 0; bottom: 0;
-        height: 2px; width: 100%; border-radius: 2px;
-        background: linear-gradient(90deg, rgba(96, 165, 250, 0.95) 0%, rgba(34, 211, 238, 0.85) 45%, rgba(167, 139, 250, 0.12) 100%);
-        box-shadow: 0 0 12px -2px rgba(34, 211, 238, 0.6);
-        transform: scaleX(0); transform-origin: left center;
-        animation: wmRuleDraw 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.2s forwards;
+        content: '';
+        position: absolute; left: 12%; right: 12%; bottom: -16px;
+        height: 1px;
+        background: linear-gradient(90deg,
+            transparent 0%,
+            rgba(226, 232, 240, 0.55) 32%,
+            rgba(103, 232, 249, 0.75) 55%,
+            rgba(226, 232, 240, 0.45) 74%,
+            transparent 100%);
+        opacity: 0.55;
+        filter: blur(0.4px);
+        animation: wmHaloGlow 5.5s ease-in-out infinite;
     }
-    .wm-welcome-title .wm-kin-word { display: inline-block; white-space: nowrap; margin-right: 0.34em; }
-    .wm-welcome-title .wm-kin-word:last-child { margin-right: 0; }
+    [data-theme="light"] .wm-welcome-title::after {
+        background: linear-gradient(90deg,
+            transparent 0%,
+            rgba(51, 65, 85, 0.45) 32%,
+            rgba(14, 116, 144, 0.65) 55%,
+            rgba(51, 65, 85, 0.35) 74%,
+            transparent 100%);
+    }
+    @keyframes wmHaloGlow {
+        0%, 100% { opacity: 0.35; }
+        50%      { opacity: 0.85; }
+    }
+    .wm-welcome-title .wm-kin-word { display: inline-block; white-space: nowrap; margin-right: 0.30em; }
     .wm-welcome-title .wm-kin-ch {
         display: inline-block;
         will-change: transform;
-        transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), -webkit-text-fill-color 0.3s ease, filter 0.3s ease;
-        animation: wmCharIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) backwards;
-    }
-    .wm-welcome-title .wm-kin-ch.wm-kin-up {
-        transform: translateY(-6px) rotate(-3deg) scale(1.09);
-        -webkit-text-fill-color: #dbeafe;
-        filter: drop-shadow(0 0 10px rgba(147, 197, 253, 0.95));
+        /* GUMUS -> TURKUAZ: renkler JS tarafindan harf sirasina gore
+           enterpole edilir (--wm-ch-top / --wm-ch-hi / --wm-ch-bot).
+           Uzerine binen acik bant harfin icinde soldan saga akar:
+           "Magic UI" shimmer efekti. */
+        background-image: linear-gradient(100deg,
+            var(--wm-ch-top, #e2e8f0) 0%,
+            var(--wm-ch-top, #e2e8f0) 26%,
+            var(--wm-ch-hi, rgba(255, 255, 255, 0.92)) 48%,
+            var(--wm-ch-bot, #67e8f9) 62%,
+            var(--wm-ch-bot, #67e8f9) 100%);
+        background-size: 280% 100%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        color: transparent;
+        transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.3s ease;
+        animation: wmCharIn 0.62s cubic-bezier(0.22, 1, 0.36, 1) backwards,
+                   wmShimmerSweep 7s linear infinite;
     }
     @keyframes wmCharIn {
-        from { opacity: 0; transform: translateY(15px) scale(0.84) rotate(5deg); filter: blur(7px); }
-        to   { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); filter: blur(0); }
+        from { opacity: 0; transform: translateY(14px) scale(0.94); filter: blur(5px); }
+        to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
     }
-    @keyframes wmTitleShimmer {
-        0%, 100% { background-position: 0% 50%; }
-        50%      { background-position: 100% 50%; }
+    @keyframes wmShimmerSweep {
+        0%   { background-position: 140% 50%; }
+        100% { background-position: -40% 50%; }
     }
-    @keyframes wmRuleDraw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    /* HOVER DALGASI: harf yukselirken turkuaz bir hale kazanir. */
+    .wm-welcome-title .wm-kin-ch.wm-kin-up {
+        transform: translateY(-6px) scale(1.06);
+        filter: drop-shadow(0 0 14px rgba(103, 232, 249, 0.75));
+    }
+    [data-theme="light"] .wm-welcome-title {
+        filter: drop-shadow(0 0 18px rgba(8, 145, 178, 0.18));
+    }
+    [data-theme="light"] .wm-welcome-title .wm-kin-ch.wm-kin-up {
+        filter: drop-shadow(0 0 12px rgba(14, 116, 144, 0.45));
+    }
     @keyframes wmEyebrowIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
     @keyframes wmEyebrowPulse {
         0%, 100% { opacity: 1; box-shadow: 0 0 9px 2px rgba(6, 182, 212, 0.7); }
-        50%      { opacity: 0.55; box-shadow: 0 0 4px 1px rgba(6, 182, 212, 0.45); }
+        50%      { opacity: 0.5; box-shadow: 0 0 4px 1px rgba(6, 182, 212, 0.4); }
     }
-    [data-theme="light"] .wm-welcome-title {
-        background-image: linear-gradient(100deg, #2563eb 0%, #7c3aed 26%, #0891b2 50%, #4f46e5 74%, #2563eb 100%);
-        filter: drop-shadow(0 0 12px rgba(37, 99, 235, 0.22));
+
+    /* --- GLASSMORPHISM MOD KARTLARI ------------------------------------ */
+    .wm-gate-grid {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: start;
+        gap: clamp(16px, 2.2vw, 26px);
+        width: 100%;
     }
-    [data-theme="light"] .wm-welcome-title .wm-kin-ch.wm-kin-up { -webkit-text-fill-color: #1d4ed8; }
+    .wm-option { cursor: pointer; outline: none; }
+    .wm-gate-card {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        padding: 30px 22px 28px;
+        border-radius: 22px;
+        background:
+            linear-gradient(168deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.018) 58%, rgba(255, 255, 255, 0.045) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.11);
+        backdrop-filter: blur(20px) saturate(160%);
+        -webkit-backdrop-filter: blur(20px) saturate(160%);
+        box-shadow:
+            0 22px 48px -26px rgba(0, 0, 0, 0.85),
+            inset 0 1px 0 rgba(255, 255, 255, 0.09);
+        transition:
+            transform 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+            border-color 0.42s ease,
+            box-shadow 0.42s ease,
+            background 0.42s ease;
+    }
+    /* Ic isik: kartin ust kenarinda ince bir cam yansimasi. */
+    .wm-gate-card::before {
+        content: '';
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 42%;
+        border-radius: 22px 22px 0 0;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), transparent);
+        pointer-events: none;
+    }
+    .wm-gate-card:focus-visible {
+        border-color: rgba(148, 163, 184, 0.65);
+        box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.22);
+    }
+    /* PUBLIC: gumus parlama. */
+    .wm-gate-card--public:hover {
+        transform: translateY(-6px) scale(1.028);
+        border-color: rgba(226, 232, 240, 0.42);
+        box-shadow:
+            0 30px 60px -30px rgba(0, 0, 0, 0.9),
+            0 0 42px -10px rgba(226, 232, 240, 0.35),
+            inset 0 1px 0 rgba(255, 255, 255, 0.16);
+    }
+    .wm-gate-card--public:hover .wm-gate-icon {
+        color: #f1f5f9;
+        filter: drop-shadow(0 0 12px rgba(226, 232, 240, 0.75));
+    }
+    /* PRIVATE: cyan (turkuaz) aura. */
+    .wm-gate-card--private:hover {
+        transform: translateY(-6px) scale(1.028);
+        border-color: rgba(103, 232, 249, 0.46);
+        box-shadow:
+            0 30px 60px -30px rgba(0, 0, 0, 0.9),
+            0 0 54px -8px rgba(34, 211, 238, 0.48),
+            inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    }
+    .wm-gate-card--private:hover .wm-gate-icon {
+        color: #a5f3fc;
+        filter: drop-shadow(0 0 12px rgba(34, 211, 238, 0.85));
+    }
+    /* PRIVATE acik hal: aura kalici; genislerken hover ziplamasi yok. */
+    .wm-gate-card--private.wm-open {
+        border-color: rgba(103, 232, 249, 0.40);
+        box-shadow:
+            0 30px 60px -30px rgba(0, 0, 0, 0.9),
+            0 0 60px -10px rgba(34, 211, 238, 0.42),
+            inset 0 1px 0 rgba(255, 255, 255, 0.14);
+        transform: none;
+    }
+    .wm-gate-icon {
+        width: 44px; height: 44px;
+        display: flex; align-items: center; justify-content: center;
+        color: rgba(203, 213, 225, 0.80);
+        transition: color 0.42s ease, filter 0.42s ease, transform 0.42s ease;
+    }
+    .wm-gate-icon svg { width: 34px; height: 34px; }
+    .wm-gate-card--private .wm-gate-icon { color: rgba(125, 211, 252, 0.78); }
+    .wm-gate-card:hover .wm-gate-icon { transform: translateY(-1px); }
+    .wm-gate-name {
+        font-family: var(--font-family-heading);
+        font-size: 15px; font-weight: 500;
+        letter-spacing: 0.26em;
+        text-indent: 0.26em;   /* tracking'in sag boslugunu dengeler */
+        color: var(--txt-main);
+        text-transform: uppercase;
+    }
+    .wm-gate-sub {
+        font-size: 10px; font-weight: 500;
+        letter-spacing: 0.10em;
+        color: var(--txt-muted);
+        opacity: 0.55;
+        text-align: center;
+    }
+
+
+    /* --- KUSURSUZ ETKILESIM: PRIVATE karti asagi dogru genisler ------- */
+    .wm-gate-reveal {
+        display: grid;
+        grid-template-rows: 0fr;
+        width: 100%;
+        opacity: 0;
+        visibility: hidden;
+        transition:
+            grid-template-rows 0.52s cubic-bezier(0.22, 1, 0.36, 1),
+            opacity 0.42s ease,
+            visibility 0s linear 0.52s,
+            margin-top 0.52s ease;
+        margin-top: 0;
+    }
+    .wm-gate-card--private.wm-open .wm-gate-reveal {
+        grid-template-rows: 1fr;
+        opacity: 1;
+        visibility: visible;
+        margin-top: 14px;
+        transition:
+            grid-template-rows 0.52s cubic-bezier(0.22, 1, 0.36, 1),
+            opacity 0.42s ease 0.10s,
+            visibility 0s linear 0s,
+            margin-top 0.52s ease;
+    }
+    .wm-gate-reveal-inner {
+        overflow: hidden;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        /* Kart tiklamasi icerige sizmasin; JS tarafinda da stopPropagation var. */
+        cursor: default;
+    }
+
+    /* Sifre kutusu: kartin icinde, cam yuzey, cyan odak. */
+    .wm-password-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding-top: 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        animation: wmPwFadeIn 0.42s ease 0.12s both;
+    }
+    @keyframes wmPwFadeIn {
+        from { opacity: 0; transform: translateY(-8px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+    .wm-pw-label {
+        font-family: var(--font-family-hacker);
+        font-size: 9px; font-weight: 700;
+        letter-spacing: 1.8px;
+        text-transform: uppercase;
+        color: var(--txt-muted);
+        text-align: left;
+    }
+    .wm-pw-input {
+        width: 100%;
+        height: 40px;
+        padding: 0 13px;
+        background: rgba(255, 255, 255, 0.055);
+        color: var(--txt-main);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 11px;
+        font-family: var(--font-family-base);
+        font-size: var(--font-size-base);
+        letter-spacing: 0.08em;
+        outline: none;
+        transition: border-color 0.28s ease, box-shadow 0.28s ease, background 0.28s ease;
+    }
+    .wm-pw-input::placeholder { color: var(--txt-muted); opacity: 0.55; letter-spacing: 0.02em; }
+    .wm-pw-input:focus {
+        border-color: rgba(103, 232, 249, 0.62);
+        background: rgba(255, 255, 255, 0.085);
+        box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.16);
+    }
+    .wm-error {
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1.5;
+        color: var(--color-danger, #ef4444);
+        margin: 0;
+        text-align: left;
+    }
+    /* Alt bar: kart icinde, saga yasli; JS display flex/none yonetir. */
+    .wm-modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 9px;
+    }
+    .wm-gate-btn {
+        height: 36px;
+        padding: 0 16px;
+        font-size: 11.4px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        border-radius: 10px;
+    }
+    .wm-gate-btn#wm-continue-btn {
+        background: linear-gradient(135deg, rgba(34, 211, 238, 0.92), rgba(59, 130, 246, 0.92));
+        border-color: transparent;
+        color: #04121c;
+        box-shadow: 0 8px 24px -12px rgba(34, 211, 238, 0.9);
+    }
+    .wm-gate-btn#wm-continue-btn:hover:not(:disabled) {
+        filter: brightness(1.08);
+        box-shadow: 0 10px 28px -10px rgba(34, 211, 238, 0.95);
+    }
+    .wm-gate-btn#wm-continue-btn:disabled { opacity: 0.7; cursor: progress; }
+    .wm-gate-btn.btn-secondary {
+        background: rgba(255, 255, 255, 0.055);
+        border: 1px solid rgba(255, 255, 255, 0.13);
+        color: var(--txt-sub);
+    }
+    .wm-gate-btn.btn-secondary:hover { background: rgba(255, 255, 255, 0.10); color: var(--txt-main); }
+
+
+    /* --- ACIK TEMA UYARLAMALARI --------------------------------------- */
+    [data-theme="light"] .wm-gate-card {
+        background: linear-gradient(168deg, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0.62) 100%);
+        border-color: rgba(15, 23, 42, 0.09);
+        box-shadow: 0 22px 46px -28px rgba(15, 23, 42, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    }
+    [data-theme="light"] .wm-gate-card::before { background: linear-gradient(180deg, rgba(255, 255, 255, 0.75), transparent); }
+    [data-theme="light"] .wm-gate-icon { color: rgba(71, 85, 105, 0.8); }
+    [data-theme="light"] .wm-gate-card--private .wm-gate-icon { color: rgba(14, 116, 144, 0.8); }
+    [data-theme="light"] .wm-gate-card--public:hover {
+        border-color: rgba(100, 116, 139, 0.45);
+        box-shadow: 0 28px 56px -30px rgba(15, 23, 42, 0.45), 0 0 38px -12px rgba(100, 116, 139, 0.45);
+    }
+    [data-theme="light"] .wm-gate-card--private:hover,
+    [data-theme="light"] .wm-gate-card--private.wm-open {
+        border-color: rgba(8, 145, 178, 0.45);
+        box-shadow: 0 28px 56px -30px rgba(15, 23, 42, 0.45), 0 0 46px -12px rgba(8, 145, 178, 0.45);
+    }
+    [data-theme="light"] .wm-pw-input { background: rgba(255, 255, 255, 0.75); border-color: rgba(15, 23, 42, 0.12); }
+    [data-theme="light"] .wm-password-wrap { border-top-color: rgba(15, 23, 42, 0.09); }
+    [data-theme="light"] .wm-gate-btn.btn-secondary { background: rgba(15, 23, 42, 0.05); border-color: rgba(15, 23, 42, 0.13); }
+
+    /* --- DAR EKRAN ----------------------------------------------------- */
+    @media (max-width: 760px) {
+        #work-mode-modal.wm-mode-overlay { padding: 28px 14px; }
+        .wm-gate-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+        .wm-gate-card { padding: 24px 18px 22px; }
+        .wm-gate-name { font-size: 13.5px; letter-spacing: 0.22em; text-indent: 0.22em; }
+        .wm-welcome-title { letter-spacing: 0.10em; }
+    }
+
+    /* --- HAREKET AZALTMA ---------------------------------------------- */
     @media (prefers-reduced-motion: reduce) {
-        .wm-welcome-title,
-        .wm-welcome-title .wm-kin-ch,
+        .wm-gate-aurora,
         .wm-welcome-title::after,
         .wm-welcome-eyebrow,
-        .wm-welcome-eyebrow::before { animation: none; }
-        .wm-welcome-title::after { transform: scaleX(1); }
+        .wm-welcome-eyebrow::before,
+        .wm-welcome-title .wm-kin-ch,
+        .wm-password-wrap { animation: none; }
         .wm-welcome-title .wm-kin-ch { transition: none; }
         .wm-welcome-title .wm-kin-ch.wm-kin-up { transform: none; }
-    }
-    .wm-modal-close { background: transparent; border: none; color: var(--txt-muted); font-size: 16px; cursor: pointer; padding: 6px; border-radius: var(--radius-sm); }
-    .wm-modal-close:hover { background: var(--surface-glass); color: var(--txt-main); }
-    .wm-modal-body { display: flex; flex-direction: column; gap: 10px; }
-    .wm-option {
-        display: flex; align-items: center; gap: 12px;
-        padding: 13px 14px; border-radius: var(--radius-md, 12px);
-        border: 1px solid var(--surface-border);
-        background: var(--surface-glass); cursor: pointer;
-        transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
-    }
-    .wm-option:hover { border-color: var(--color-primary); }
-    .wm-option.selected { border-color: var(--color-primary); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18); }
-    .wm-option-icon { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
-    .wm-icon-public  { background: rgba(148, 163, 184, 0.16); color: #94a3b8; }
-    .wm-icon-private { background: rgba(16, 185, 129, 0.16); color: var(--color-emerald, #10b981); }
-    .wm-option-text { flex: 1; min-width: 0; }
-    .wm-option-title { font-size: 13px; font-weight: 800; color: var(--txt-main); display: flex; align-items: center; gap: 8px; }
-    .wm-option-tag { font-size: 9.6px; font-weight: 700; letter-spacing: 0.4px; padding: 2px 7px; border-radius: 999px; background: rgba(148, 163, 184, 0.16); color: var(--txt-sub); text-transform: uppercase; }
-    .wm-tag-private { background: rgba(16, 185, 129, 0.16); color: var(--color-emerald, #10b981); }
-    .wm-option-desc { font-size: 11.2px; line-height: 1.55; color: var(--txt-muted); margin-top: 3px; }
-    .wm-option-check { color: var(--color-primary); font-size: 15px; opacity: 0; transition: opacity var(--transition-fast); }
-    .wm-option.selected .wm-option-check { opacity: 1; }
-    .wm-password-wrap { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: var(--radius-md, 12px); border: 1px dashed var(--surface-border); background: var(--surface-glass); }
-    .wm-pw-label { font-size: 10.2px; font-weight: 800; letter-spacing: 0.8px; color: var(--txt-sub); }
-    .wm-pw-input { width: 100%; height: 36px; padding: 0 12px; background: var(--input-bg); color: var(--txt-main); border: 1px solid var(--surface-border); border-radius: var(--radius-sm); font-family: var(--font-family-base); font-size: var(--font-size-base); outline: none; }
-    .wm-pw-input:focus { border-color: var(--color-primary); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.22); }
-    .wm-pw-hint { font-size: 10.4px; color: var(--txt-muted); margin: 0; }
-    .wm-error { font-size: 11.4px; font-weight: 700; color: var(--color-danger, #ef4444); margin: 0; }
-    .wm-modal-footer { display: flex; justify-content: flex-end; gap: 10px; }
-    @media (prefers-reduced-motion: reduce) {
-        #work-mode-modal .modal-card, .wm-option, .work-mode-badge { transition: none; animation: none; }
+        .wm-gate-card,
+        .wm-gate-icon,
+        .wm-gate-reveal { transition: none; }
+        .wm-gate-card:hover { transform: none; }
     }
 </style>
 <!-- ==========================================================================
@@ -2093,12 +2527,12 @@
         border: var(--edge-subtle);
     }
     .guest-block-overlay.is-success .guest-block-icon {
-        color: var(--color-emerald, #22c55e);
+        color: var(--color-emerald, #2dd4bf);
         background: rgba(34, 197, 94, 0.12);
     }
     .guest-block-overlay.is-error .guest-block-icon,
     .guest-block-overlay:not(.is-success):not(.is-error).visible .guest-block-icon.fa-triangle-exclamation {
-        color: var(--color-rose, #f43f5e);
+        color: var(--color-rose, #fb7185);
         background: rgba(244, 63, 94, 0.12);
     }
 
