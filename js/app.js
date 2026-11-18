@@ -211,16 +211,45 @@ function initScreensaver() {
 const canvas = document.getElementById('constellation-canvas');
 const ctx = canvas.getContext('2d');
 
+const BG_CFG_KEY = 'yaser_v10_bg_cfg';
+const BG_DEFAULT_CFG = {
+    enabled: true, density: 1, link: 110, speed: 1,
+    interaction: 'repel', ripple: true,
+    topo: true, orbs: true, grain: true, glow: true
+};
+let bgCfg = { ...BG_DEFAULT_CFG };
+try {
+    const savedBg = JSON.parse(localStorage.getItem(BG_CFG_KEY));
+    if (savedBg && typeof savedBg === 'object') {
+        ['enabled', 'ripple', 'topo', 'orbs', 'grain', 'glow'].forEach(k => {
+            if (typeof savedBg[k] === 'boolean') bgCfg[k] = savedBg[k];
+        });
+        if (Number.isFinite(savedBg.density)) bgCfg.density = savedBg.density;
+        if (Number.isFinite(savedBg.link)) bgCfg.link = savedBg.link;
+        if (Number.isFinite(savedBg.speed)) bgCfg.speed = savedBg.speed;
+        if (savedBg.interaction === 'attract' || savedBg.interaction === 'off') bgCfg.interaction = savedBg.interaction;
+    }
+} catch (e) { /* bozuk kayıt: varsayılan kalır */ }
+
 let particlesArray = [];
-let mouse = { x: null, y: null, radius: 130 };
+let mouse = { x: null, y: null, radius: 150 };
+/* Tıklama enerji dalgaları: { x, y, r, max } — en fazla 4 tanesi yaşar. */
+let bgWaves = [];
+let bgLastT = 0;
+let bgRaf = 0;
+let bgRunning = false;
 
 /* PERF: Tema her karede DOM'dan (getAttribute) okunuyordu; bu, saniyede
    ~60 kez stil hesabı tetikleyip tüm ağacın stil yeniden hesaplanmasına
    yol açıyordu. Tema yalnızca değiştiğinde güncellenen tek bir bayrağa
    çevrildi — görsel sonuç birebir aynı, DOM okuması kare başına 0. */
-let isDarkTheme = document.documentElement.getAttribute('data-theme') === 'dark';
+let isDarkTheme = document.documentElement.getAttribute('data-theme') !== 'light';
 const constellationThemeObserver = new MutationObserver(() => {
-    isDarkTheme = document.documentElement.getAttribute('data-theme') === 'dark';
+    /* 4 temalı mimaride 'light' TEK açık temadır; executive ve midnight-blue
+       da koyu sayılır. Bu yüzden karşılaştırma "=== 'dark'" değil,
+       "!== 'light'" olmalı — aksi hâlde yeni temalarda yıldız tozu paleti
+       açık tema paletine düşerdi. */
+    isDarkTheme = document.documentElement.getAttribute('data-theme') !== 'light';
 });
 constellationThemeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
@@ -322,36 +351,51 @@ class Particle {
         this.vx = (Math.random() - 0.5) * 0.8;
         this.vy = (Math.random() - 0.5) * 0.8;
         this.radius = Math.random() * 2 + 1;
+        /* Nefes fazı: her düğüm rastgele bir noktadan başlar ki ağ
+           topluca değil, dağınık biçimde "soluk alıp versin". */
+        this.phase = Math.random() * Math.PI * 2;
     }
-    update() {
-        this.x += this.vx;
-        this.y += this.vy;
+    update(dt) {
+        /* dt saniye cinsindendir; hız ayarı hareketi çarpar. Kare süresi
+           değişse de (60/120 Hz) görünen hız aynı kalır. */
+        const step = dt * bgCfg.speed;
+        this.x += this.vx * step * 60;
+        this.y += this.vy * step * 60;
 
         if (this.x < 0 || this.x > canvasCssWidth) this.vx = -this.vx;
         if (this.y < 0 || this.y > canvasCssHeight) this.vy = -this.vy;
 
-        if (mouse.x !== null && mouse.y !== null) {
-            let dx = mouse.x - this.x;
-            let dy = mouse.y - this.y;
-            let distance = Math.sqrt(dx * dx + dy * dy);
-            if (distance < mouse.radius) {
-                let forceDirectionX = dx / distance;
-                let forceDirectionY = dy / distance;
-                let force = (mouse.radius - distance) / mouse.radius;
-                this.x -= forceDirectionX * force * 1.5;
-                this.y -= forceDirectionY * force * 1.5;
-            }
-        }
+        /* Nefes fazı burada ilerler: çizim yalnızca okur. */
+        this.phase += dt * 1.4 * bgCfg.speed;
+
+        if (bgCfg.interaction === 'off') return;
+        if (mouse.x === null || mouse.y === null) return;
+
+        const dx = mouse.x - this.x;
+        const dy = mouse.y - this.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance >= mouse.radius || distance === 0) return;
+
+        const force = (mouse.radius - distance) / mouse.radius;
+        const nx = dx / distance;
+        const ny = dy / distance;
+        /* repel: imleçten kaçar · attract: imlece çekilir. Kuvvet dt ile
+           ölçeklenir, aksi hâlde yüksek tazeleme hızında iki kat hızlanırdı. */
+        const push = force * 90 * dt * (bgCfg.interaction === 'attract' ? -1 : 1);
+        this.x += nx * push;
+        this.y += ny * push;
     }
     draw() {
+        /* Nefes: düğüm yarıçapı sinüzoidal salınır (tek sin, ek maliyet yok). */
+        const pulse = 0.78 + (Math.sin(this.phase) * 0.5 + 0.5) * 0.45;
         ctx.fillStyle = isDarkTheme ? 'rgba(96, 165, 250, 0.6)' : 'rgba(59, 130, 246, 0.5)';
         ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.arc(this.x, this.y, this.radius * pulse, 0, Math.PI * 2);
         ctx.closePath();
         ctx.fill();
 
         /* FX: fare yakınındaki parçacıklar cyan ışıma kazanır */
-        if (mouse.x !== null && mouse.y !== null) {
+        if (bgCfg.interaction !== 'off' && mouse.x !== null && mouse.y !== null) {
             const dx = mouse.x - this.x;
             const dy = mouse.y - this.y;
             const mdist = Math.sqrt(dx * dx + dy * dy);
@@ -372,17 +416,101 @@ class Particle {
 function initParticles() {
     particlesArray = [];
     /* PERF: Alan hesabı CSS ölçüsüyle yapılır; böylece yoğun ekranda
-       dpr=2 yüzünden parçacık sayısı gereksiz 4 katına çıkmaz. */
-    let numberOfParticles = Math.floor((canvasCssWidth * canvasCssHeight) / 16000);
-    if (numberOfParticles < 30) numberOfParticles = 30;
-    if (numberOfParticles > 90) numberOfParticles = 90;
+       dpr=2 yüzünden parçacık sayısı gereksiz 4 katına çıkmaz.
+       Yoğunluk çarpanı kullanıcı ayarıdır (0.3x – 2.4x). */
+    let numberOfParticles = Math.floor((canvasCssWidth * canvasCssHeight) / 16000 * bgCfg.density);
+    if (numberOfParticles < 22) numberOfParticles = 22;
+    if (numberOfParticles > 240) numberOfParticles = 240;
 
     for (let i = 0; i < numberOfParticles; i++) {
         particlesArray.push(new Particle());
     }
 }
 
-function animateParticles() {
+/* Bağlantı taraması — UZAMSAL IZGARA.
+   v1 tüm çiftleri tarıyordu (O(n²)); 240 düğümde 28.680 çift/kare olurdu.
+   Hücre boyutu bağlantı mesafesi seçildiği için yalnızca 3×3 komşuluk
+   gezilir; sonuç birebir aynı bağlantı kümesidir, tarama maliyeti düşer. */
+function bgLinkPass() {
+    const link = bgCfg.link;
+    const linkSq = link * link;
+    const cell = Math.max(48, link);
+    const buckets = new Map();
+    const count = particlesArray.length;
+
+    for (let i = 0; i < count; i++) {
+        const p = particlesArray[i];
+        const key = Math.floor(p.x / cell) + ':' + Math.floor(p.y / cell);
+        let arr = buckets.get(key);
+        if (!arr) { arr = []; buckets.set(key, arr); }
+        arr.push(i);
+    }
+
+    const baseAlpha = isDarkTheme ? 0.22 : 0.16;
+    const mouseActive = (mouse.x !== null && mouse.y !== null);
+
+    for (let i = 0; i < count; i++) {
+        const p = particlesArray[i];
+        const cx = Math.floor(p.x / cell);
+        const cy = Math.floor(p.y / cell);
+
+        for (let ox = -1; ox <= 1; ox++) {
+            for (let oy = -1; oy <= 1; oy++) {
+                const arr = buckets.get((cx + ox) + ':' + (cy + oy));
+                if (!arr) continue;
+
+                for (let k = 0; k < arr.length; k++) {
+                    const j = arr[k];
+                    if (j <= i) continue;
+                    const q = particlesArray[j];
+                    const dx = p.x - q.x;
+                    const dy = p.y - q.y;
+                    const distSq = dx * dx + dy * dy;
+                    if (distSq >= linkSq) continue;
+
+                    const dist = Math.sqrt(distSq);
+                    let opacity = (1 - (dist / link)) * baseAlpha;
+                    if (mouseActive) {
+                        const d1x = mouse.x - p.x, d1y = mouse.y - p.y;
+                        const d2x = mouse.x - q.x, d2y = mouse.y - q.y;
+                        const nearest = Math.min(Math.sqrt(d1x * d1x + d1y * d1y), Math.sqrt(d2x * d2x + d2y * d2y));
+                        if (nearest < mouse.radius) opacity += (1 - nearest / mouse.radius) * 0.3;
+                    }
+                    _queueLink(p.x, p.y, q.x, q.y, opacity, isDarkTheme);
+                }
+            }
+        }
+    }
+}
+
+/* Enerji dalgalarını ilerlet ve çiz: genişleyen, sönen halka. */
+function bgUpdateWaves(dt) {
+    if (!bgWaves.length) return;
+    for (let i = bgWaves.length - 1; i >= 0; i--) {
+        const w = bgWaves[i];
+        w.r += 520 * dt;
+        if (w.r >= w.max) { bgWaves.splice(i, 1); continue; }
+
+        const t = 1 - w.r / w.max;
+        ctx.beginPath();
+        ctx.strokeStyle = isDarkTheme
+            ? `rgba(125, 211, 252, ${(t * 0.34).toFixed(3)})`
+            : `rgba(13, 148, 136, ${(t * 0.28).toFixed(3)})`;
+        ctx.lineWidth = 1 + t * 1.6;
+        ctx.arc(w.x, w.y, w.r, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+}
+
+function animateParticles(now) {
+    if (!bgRunning) return;
+    if (typeof now !== 'number') now = performance.now();
+    if (!bgLastT) bgLastT = now;
+    let dt = (now - bgLastT) / 1000;
+    bgLastT = now;
+    /* Sekme arka plandan dönünce dt büyük gelir; 50 ms ile sınırlanır. */
+    if (dt > 0.05) dt = 0.05;
+
     /* PERF: setTransform uygulandığı için clearRect da CSS koordinatıyla
        verilmelidir (aksi halde yalnızca bir kısmı temizlenirdi). */
     ctx.clearRect(0, 0, canvasCssWidth, canvasCssHeight);
@@ -405,62 +533,146 @@ function animateParticles() {
     }
 
     const count = particlesArray.length;
-    const LINK_DIST = 110;
-    const LINK_DIST_SQ = LINK_DIST * LINK_DIST;
-    const baseAlpha = isDark ? 0.22 : 0.16;
-    const mouseActive = (mouse.x !== null && mouse.y !== null);
 
-    /* PERF: Bağlantı hesabı artık kare başına tek bir geçiş yapıyor.
-       Tüm çiftler tek tek beginPath/stroke ile çizilmek yerine, eşik mesafesi
-       (110) doğrudan karekök ALINMADAN karekök üzerinden karşılaştırılır.
-       Kare içinde opaklık gruplandırılıp yol toplu (tek stroke) çizilir:
-       aynı renk/alpha, aynı piksel çıktısı — ama yüzlerce stroke çağrısı
-       yerine birkaç batch. */
-    if (mouseActive) {
-        for (let i = 0; i < count; i++) {
-            const p = particlesArray[i];
-            p.update();
-            p.draw();
-
-            for (let j = i + 1; j < count; j++) {
-                const q = particlesArray[j];
-                const dx = p.x - q.x;
-                const dy = p.y - q.y;
-                const distSq = dx * dx + dy * dy;
-                if (distSq >= LINK_DIST_SQ) continue;
-
-                const dist = Math.sqrt(distSq);
-                let opacity = (1 - (dist / LINK_DIST)) * baseAlpha;
-                const d1x = mouse.x - p.x, d1y = mouse.y - p.y;
-                const d2x = mouse.x - q.x, d2y = mouse.y - q.y;
-                const nearest = Math.min(Math.sqrt(d1x * d1x + d1y * d1y), Math.sqrt(d2x * d2x + d2y * d2y));
-                if (nearest < mouse.radius) opacity += (1 - nearest / mouse.radius) * 0.3;
-                _queueLink(p.x, p.y, q.x, q.y, opacity, isDark);
-            }
-        }
-    } else {
-        for (let i = 0; i < count; i++) {
-            const p = particlesArray[i];
-            p.update();
-            p.draw();
-
-            for (let j = i + 1; j < count; j++) {
-                const q = particlesArray[j];
-                const dx = p.x - q.x;
-                const dy = p.y - q.y;
-                const distSq = dx * dx + dy * dy;
-                if (distSq >= LINK_DIST_SQ) continue;
-                _queueLink(p.x, p.y, q.x, q.y, (1 - (Math.sqrt(distSq) / LINK_DIST)) * baseAlpha, isDark);
-            }
-        }
+    /* Güncelleme ve çizim tek geçişte; bağlantılar ayrı, ızgara tabanlı
+       geçişte toplanıp tek seferde çizilir (bkz. bgLinkPass). */
+    for (let i = 0; i < count; i++) {
+        const p = particlesArray[i];
+        p.update(dt);
+        p.draw();
     }
 
+    bgLinkPass();
     _flushLinks();
-    requestAnimationFrame(animateParticles);
+    bgUpdateWaves(dt);
+
+    bgRaf = requestAnimationFrame(animateParticles);
 }
 
-initParticles();
-animateParticles();
+/* --- KATMAN ANAHTARLARI ------------------------------------------------
+   Gövdeye yazılan sınıflar CSS'te ilgili katmanı gizler. Görsel sonuç
+   anında; hiçbir katman DOM'dan silinmez (kullanıcı isteği: kaldırma). */
+function applyBgLayerFlags() {
+    const b = document.body.classList;
+    b.toggle('fx-bg-off', !bgCfg.enabled);
+    b.toggle('fx-topo-off', !bgCfg.topo);
+    b.toggle('fx-orbs-off', !bgCfg.orbs);
+    b.toggle('fx-grain-off', !bgCfg.grain);
+    b.toggle('fx-glow-off', !bgCfg.glow);
+}
+
+function startBgEngine() {
+    if (bgRunning || !bgCfg.enabled) return;
+    bgRunning = true;
+    bgLastT = 0;
+    bgRaf = requestAnimationFrame(animateParticles);
+}
+
+function stopBgEngine() {
+    bgRunning = false;
+    if (bgRaf) { cancelAnimationFrame(bgRaf); bgRaf = 0; }
+    bgWaves.length = 0;
+    ctx.clearRect(0, 0, canvasCssWidth, canvasCssHeight);
+}
+
+const BG_FLAG_KEYS = ['enabled', 'ripple', 'topo', 'orbs', 'grain', 'glow'];
+
+function persistBgCfg() {
+    try { localStorage.setItem(BG_CFG_KEY, JSON.stringify(bgCfg)); } catch (e) { /* private mod */ }
+}
+
+function setBgConfig(key, val) {
+    if (key === 'density') {
+        const n = Number(val);
+        if (!Number.isFinite(n)) return;
+        bgCfg.density = Math.min(2.4, Math.max(0.3, n));
+        initParticles();
+    } else if (key === 'link') {
+        const n = Number(val);
+        if (!Number.isFinite(n)) return;
+        bgCfg.link = Math.min(220, Math.max(60, n));
+    } else if (key === 'speed') {
+        const n = Number(val);
+        if (!Number.isFinite(n)) return;
+        bgCfg.speed = Math.min(2.4, Math.max(0.2, n));
+    } else if (key === 'interaction') {
+        bgCfg.interaction = (val === 'attract' || val === 'off') ? val : 'repel';
+    } else {
+        return;
+    }
+    persistBgCfg();
+    syncBgControls();
+}
+
+function toggleBgFlag(key) {
+    if (BG_FLAG_KEYS.indexOf(key) === -1) return;
+    bgCfg[key] = !bgCfg[key];
+    persistBgCfg();
+    applyBgLayerFlags();
+    if (key === 'enabled') {
+        if (bgCfg.enabled) startBgEngine(); else stopBgEngine();
+    }
+    syncBgControls();
+}
+
+/* Ayar kontrollerini kayıtlı duruma eşitler (sekme açılışında da çağrılır). */
+function syncBgControls() {
+    BG_FLAG_KEYS.forEach(k => {
+        const el = document.getElementById('bg-' + k + '-switch');
+        if (!el) return;
+        /* .on sınıfı anahtarın görsel konumunu belirler (bkz. .pref-switch.on);
+           aria-checked ekran okuyucular için aynı durumu yansıtır. */
+        el.classList.toggle('on', !!bgCfg[k]);
+        el.setAttribute('aria-checked', bgCfg[k] ? 'true' : 'false');
+    });
+    const d = document.getElementById('bg-density-select');
+    if (d) d.value = String(bgCfg.density);
+    const l = document.getElementById('bg-link-select');
+    if (l) l.value = String(bgCfg.link);
+    const s = document.getElementById('bg-speed-select');
+    if (s) s.value = String(bgCfg.speed);
+    const it = document.getElementById('bg-interaction-select');
+    if (it) it.value = bgCfg.interaction;
+    const off = document.getElementById('bg-live-state');
+    if (off) {
+        off.textContent = bgCfg.enabled ? 'Çalışıyor' : 'Duraklatıldı';
+        off.style.color = bgCfg.enabled ? 'var(--color-emerald)' : 'var(--txt-muted)';
+    }
+}
+
+function resetBgConfig() {
+    bgCfg = { ...BG_DEFAULT_CFG };
+    persistBgCfg();
+    applyBgLayerFlags();
+    initParticles();
+    startBgEngine();
+    syncBgControls();
+    if (typeof showToast === 'function') showToast('Arka plan ayarları varsayılana döndürüldü.', 'info');
+}
+
+function initBgEngine() {
+    applyBgLayerFlags();
+    syncBgControls();
+    initParticles();
+    if (bgCfg.enabled) startBgEngine();
+
+    /* Tıklama dalgası: tuval pointer-events:none olduğu için pencere dinlenir. */
+    window.addEventListener('pointerdown', (e) => {
+        if (!bgCfg.enabled || !bgCfg.ripple) return;
+        bgWaves.push({
+            x: e.clientX, y: e.clientY, r: 0,
+            max: Math.max(canvasCssWidth, canvasCssHeight) * 0.55
+        });
+        if (bgWaves.length > 4) bgWaves.shift();
+    }, { passive: true });
+
+    /* Sekme gizlenince döngü tamamen durur (boşuna kare üretilmez). */
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) stopBgEngine(); else startBgEngine();
+    });
+}
+
+initBgEngine();
 
 /* ==========================================================================
    SPLASH SCREEN — BLUEPRINT LOADER
@@ -591,11 +803,6 @@ function startSplashLoaderOnce() {
        hissedilmez, yükleme %100 olunca loader kapanır ve panel hazırdır. */
     revealAppBehindSplash();
     startSplashLoader();
-}
-
-function generateSplashBeams() {
-    // Eski beam üretimi artık kullanılmıyor (blueprint grid ile değiştirildi).
-    // Fonksiyonu bilerek boş bırakıldı — geriye dönük çağrı hata vermesin.
 }
 
 /* ==========================================================================
@@ -932,25 +1139,11 @@ function toggleHeatZones() {
     updateMapLegendMode();
 }
 
+
+/* Isı Haritası düğmesinin basılı durumu. Lejant kaldırıldığı için burada
+   yalnızca düğme durumu yönetilir; ölçek/lejant gövdesi yok. */
 function updateMapLegendMode() {
-    const projectsLegend = document.getElementById('legend-projects');
-    const zonesLegend = document.getElementById('legend-zones');
     const zoneBtn = document.getElementById('zone-toggle-btn');
-    if (!projectsLegend || !zonesLegend) return;
-
-    /* Işık haritası kalktı: legend yalnızca normal choropleth ve ısı bölgeleri
-       arasında geçiş yapar. */
-    if (heatZonesActive) {
-        projectsLegend.style.display = 'none';
-        zonesLegend.style.display = 'flex';
-        zonesLegend.innerHTML = '<span style="font-weight:800;">Isı Bölgesi:</span>' + TR_HEAT_ZONES.map(z =>
-            `<span class="zone-legend-item"><span class="zone-swatch" style="background:${z.color};"></span>${z.id}</span>`
-        ).join('');
-    } else {
-        projectsLegend.style.display = 'flex';
-        zonesLegend.style.display = 'none';
-    }
-
     if (zoneBtn) zoneBtn.classList.toggle('active', heatZonesActive);
 }
 
@@ -1824,14 +2017,34 @@ function initMapTouchHint() {
     }, { passive: true });
 }
 
+/* ==========================================================================
+   TEMA DÖNGÜSÜ — 4 tema, tek buton
+   --------------------------------------------------------------------------
+   Sıra: dark (Deep Void) -> light (Soft Slate) -> executive -> midnight-blue
+   data-theme <html> üzerinde yaşar; CSS tarafındaki her tema bloğu YALNIZCA
+   token ve --fam-* değerlerini yeniden tanımlar, kural gövdesi kopyalanmaz.
+
+   NOT: THEMES dizisi hem initTheme doğrulamasında hem toggle'da TEK kaynaktır.
+   Yeni bir tema eklemek = diziye bir ad eklemek + CSS'te bir blok açmak.
+   ========================================================================== */
+const THEMES = ['dark', 'light', 'executive', 'midnight-blue'];
+
 function initTheme() {
     const saved = localStorage.getItem('yaser_theme') || 'dark';
-    document.documentElement.setAttribute('data-theme', saved);
+    /* Kayıtlı değer listede yoksa (eski sürüm, elle düzenleme, bozuk veri)
+       data-theme hiçbir CSS bloğuyla eşleşmez ve arayüz :root değerlerinde
+       kalır — sessiz hata. Bu yüzden geçersiz değer 'dark'a düşürülür. */
+    const theme = THEMES.includes(saved) ? saved : 'dark';
+    document.documentElement.setAttribute('data-theme', theme);
+    syncThemeToggleLabel(theme);
 }
 
 function toggleDarkMode() {
     const current = document.documentElement.getAttribute('data-theme');
-    const next = current === 'dark' ? 'light' : 'dark';
+    const idx = THEMES.indexOf(current);
+    /* Bilinmeyen bir tema (ör. lang/debug ile elle yazılmış) varsa döngü
+       baştan başlar; -1 + 1 = 0 → 'dark'. */
+    const next = THEMES[(idx + 1) % THEMES.length];
     document.documentElement.setAttribute('data-theme', next);
     localStorage.setItem('yaser_theme', next);
     if(mapG) updateMapColors();
@@ -1839,6 +2052,24 @@ function toggleDarkMode() {
        yeniden hesaplanır; aksi hâlde gümüş→turkuaz geçişi eski temanın
        tonlarında kalır. */
     refreshStartupGateTitle();
+    syncThemeToggleLabel(next);
+}
+
+/* Tema butonunun etiketi, aktif temayı söyler. İkon sınıfları HTML'de
+   tanımlıdır ve JS yalnızca metni günceller — DOM yapısı değişmez.
+   Etiket, tema görünen adıyla birebir eşleşir (kullanıcı hangi temada
+   olduğunu adından okur). */
+function syncThemeToggleLabel(theme) {
+    const el = document.getElementById('theme-toggle-text');
+    if (!el) return;
+    const meta = {
+        'dark':          { icon: 'fa-solid fa-moon',        label: 'Gece Modu' },
+        'light':         { icon: 'fa-solid fa-sun',         label: 'Gündüz Modu' },
+        'executive':     { icon: 'fa-solid fa-briefcase',   label: 'Executive' },
+        'midnight-blue': { icon: 'fa-solid fa-star',        label: 'Midnight Blue' }
+    }[theme] || { icon: 'fa-solid fa-moon', label: 'Gece Modu' };
+    el.innerHTML = '<i class="' + meta.icon + '"></i> ' + meta.label;
+    el.setAttribute('data-theme-active', theme);
 }
 
 /* Kinetik karşılama başlığının paleti `data-theme` değerine bağlıdır.
@@ -1853,7 +2084,14 @@ function refreshStartupGateTitle() {
 function loadCustomTheme() {
     const savedCustom = localStorage.getItem('yaser_v10_custom_theme');
     if (savedCustom) {
-        customThemeVars = JSON.parse(savedCustom);
+        /* Bozuk tema kaydı açılışı kilitlemesin: çözülemezse varsayılan
+           palet kalır, ham metin '<anahtar>.bad' olarak saklanır. */
+        try { customThemeVars = JSON.parse(savedCustom); }
+        catch (e) {
+            try { localStorage.setItem('yaser_v10_custom_theme.bad', savedCustom); } catch (e2) {}
+            console.warn('[veri] Bozuk tema kaydı yanına kopyalandı.');
+            customThemeVars = {};
+        }
         Object.keys(customThemeVars).forEach(key => {
             document.documentElement.style.setProperty(key, customThemeVars[key]);
             
@@ -2293,6 +2531,9 @@ function _zkWrite(key, value) {
         zkCipherCache.set(key, cipher);
     }).catch(err => {
         console.warn('[zk] Şifreli yazma başarısız (' + key + '):', err);
+        /* Kota/disk hatası kullanıcıya bildirilir; sessiz kalırsa kasa
+           yazılmamış olur ama arayüz kaydı başarılı gösterir. */
+        if (typeof wmWarnStorageFull === 'function') wmWarnStorageFull(err);
     });
     _zkWriteChains.set(key, next);
     return next;
@@ -2648,20 +2889,30 @@ function wmHasEncryptedVault() {
     try { return !!localStorage.getItem(ZK_META_KEY); } catch (e) { return false; }
 }
 
-/* Şifresiz depoda en az bir veri anahtarı var mı? */
-function wmHasPlainData() {
-    try {
-        for (const key of ZK_DATA_KEYS) {
-            if (localStorage.getItem(key) !== null) return true;
-        }
-    } catch (e) { /* yoksay */ }
-    return false;
-}
-
 /* Public mod yerel yazması. Şifreli kasa varken ASLA yazmaz (kasa korunur). */
 function wmPlainWrite(key, text) {
     if (wmHasEncryptedVault()) return;
-    try { localStorage.setItem(key, String(text)); } catch (e) { /* yoksay */ }
+    try {
+        localStorage.setItem(key, String(text));
+    } catch (e) {
+        /* KOTA TAŞMASI SESSİZ KALMAZ: eskiden hata yutuluyordu, kullanıcı
+           kaydettiğini sanıp sayfayı yeniliyor ve veriyi kaybediyordu.
+           Uyarı oturumda bir kez gösterilir (her yazmada toast yağmasın). */
+        wmWarnStorageFull(e);
+    }
+}
+
+/* Depo dolu uyarısı — tek seferlik, kullanıcıya ne yapacağını söyler. */
+let _storageWarned = false;
+function wmWarnStorageFull(err) {
+    if (_storageWarned) return;
+    _storageWarned = true;
+    const dolu = err && (err.name === 'QuotaExceededError' || err.code === 22);
+    const mesaj = dolu
+        ? 'Depolama alanı doldu — son değişiklikler kaydedilemedi. Yer açmak için tarayıcı verilerini veya eski yedekleri temizleyin.'
+        : 'Kayıt yazılamadı — son değişiklikler diske işlenmedi.';
+    console.error('[veri] ' + mesaj, err);
+    if (typeof showToast === 'function') showToast(mesaj, 'error');
 }
 
 /* Public mod yerel okuması: yalnızca şifresiz kayıtlar. */
@@ -3486,7 +3737,7 @@ function loadAllData() {
     ].forEach(k => _lastWritten.set(k, _zkRead(k)));
 
     const storedJobs = _zkRead('yaser_v10_jobs');
-    if (storedJobs && storedJobs !== '[]') { jobs = JSON.parse(storedJobs); }
+    if (storedJobs && storedJobs !== '[]') { jobs = _readJsonSafe('yaser_v10_jobs') || []; }
     else {
         /* Demo kayıt kimliği burada üretilir: initialJobsData içinde "id" yoktur.
            Böylece demo veri hiçbir zaman sabit bir kimlik taşımaz ve kullanıcının
@@ -3501,7 +3752,7 @@ function loadAllData() {
     /* Eski sürümde varsayılan aktif liste sabit bir kimliğe bağlıydı; o kimlik
        artık yok. Bunun yerine ilk kayıt seçilir, böylece demo kullanıcıya bir
        örnek satır gösterir ve tutarsız bir aktif listesi kalmaz. */
-    let parsedActive = rawActive ? JSON.parse(rawActive).map(String) : (jobs[0] ? [String(jobs[0].id)] : []);
+    let parsedActive = rawActive ? ((_readJsonSafe('yaser_v10_active_jobs')) || []).map(String) : (jobs[0] ? [String(jobs[0].id)] : []);
 
     const validJobIds = jobs.map(j => String(j.id));
     activeJobIds = parsedActive.filter(id => validJobIds.includes(String(id)));
@@ -3512,12 +3763,12 @@ function loadAllData() {
         saveAllData();
     }
 
-    notes = JSON.parse(_zkRead('yaser_v10_notes')) || [{ id: 'note_1', date: '2026-09-01', title: 'Revize Notu', tag: 'Önemli', color: 'amber', body: 'Detaylar incelenecek.' }];
-    noteTopics = JSON.parse(_zkRead('yaser_v10_note_topics')) || [];
+    notes = _readJsonSafe('yaser_v10_notes') || [{ id: 'note_1', date: '2026-09-01', title: 'Revize Notu', tag: 'Önemli', color: 'amber', body: 'Detaylar incelenecek.' }];
+    noteTopics = _readJsonSafe('yaser_v10_note_topics') || [];
     /* "Tüm panolar silindi" bayrağı: kayıtta pano kalmadığı an true olur, böylece
        şablon panolar sayfa yenilendiğinde geri gelmez. */
     noteBoardsAllCleared = _zkRead('yaser_v10_note_boards_cleared') === '1';
-    tasks = JSON.parse(_zkRead('yaser_v10_tasks')) || [
+    tasks = _readJsonSafe('yaser_v10_tasks') || [
         { id: 'task_0', date: '2026-09-18', createdDate: '2026-09-18', emoji: '⚡', text: 'Revize CD hazırlandı acil ihaleye gönderilmesi gerekiyor.', completed: false }
     ];
     /* Görev tarih anlamları ayrıldı (bkz. "date vs createdDate" notu): eski
@@ -3525,13 +3776,13 @@ function loadAllData() {
        günü kabul edilir ve geriye dönük uyum sağlanır. Bu normalizasyon her açılışta
        çalışır, dolayısıyla yeni alan eski kayıtlara da bir kez yazılır. */
     normalizeTaskDates(tasks);
-    files = JSON.parse(_zkRead('yaser_v10_files')) || [{ id: 'file_1', title: 'Proje Arşivi Klasörü', path: 'C:/Projeler/2026' }];
-    quickNotes = JSON.parse(_zkRead('yaser_v10_quick_notes')) || ["Afet konutları yazışmaları kontrol edilecek."];
-    stickyNotes = JSON.parse(_zkRead('yaser_v10_sticky_notes')) || ["Rapor hazırlanacak"];
-    weeklyGoal = JSON.parse(_zkRead('yaser_v10_weekly_goal')) || { Pazartesi: 5, Salı: 6, Çarşamba: 4, Perşembe: 5, Cuma: 2 };
+    files = _readJsonSafe('yaser_v10_files') || [{ id: 'file_1', title: 'Proje Arşivi Klasörü', path: 'C:/Projeler/2026' }];
+    quickNotes = _readJsonSafe('yaser_v10_quick_notes') || ["Afet konutları yazışmaları kontrol edilecek."];
+    stickyNotes = _readJsonSafe('yaser_v10_sticky_notes') || ["Rapor hazırlanacak"];
+    weeklyGoal = _readJsonSafe('yaser_v10_weekly_goal') || { Pazartesi: 5, Salı: 6, Çarşamba: 4, Perşembe: 5, Cuma: 2 };
     loadCustomListColumns();
     
-    const storedSettings = JSON.parse(_zkRead('yaser_v10_settings'));
+    const storedSettings = _readJsonSafe('yaser_v10_settings');
     let rawSettings = storedSettings ? storedSettings : defaultDropdownSettings;
     
     if (storedSettings) {
@@ -3551,7 +3802,7 @@ function loadAllData() {
         }
     });
 
-    const storedHeaders = JSON.parse(_zkRead('yaser_v10_header_titles'));
+    const storedHeaders = _readJsonSafe('yaser_v10_header_titles');
     customHeaderTitles = storedHeaders ? storedHeaders : defaultHeaderTitles;
     Object.keys(defaultHeaderTitles).forEach(k => {
         if (!customHeaderTitles[k]) customHeaderTitles[k] = defaultHeaderTitles[k];
@@ -3575,6 +3826,33 @@ function loadAllData() {
    Önbellek, sayfa yüklendiğinde mevcut değerlerle doldurulur; böylece ilk
    kayıtta da doğru karşılaştırma yapılır. */
 const _lastWritten = new Map();
+
+/* GÜVENLİ AÇILIŞ OKUMASI — bozuk kayıt uygulamayı kilitlemesin.
+   localStorage'a yarı yazılmış JSON (tarayıcı çökmesi, disk hatası, elle
+   düzenleme) açılış zincirinde SyntaxError fırlatır: fonksiyon yarıda kalır,
+   ayarlar boş, listeler 0 satır, harita 0 etiket olur — kullanıcı için
+   "verilerim gitti" görüntüsü. Bu katman bozuk metni SİLMEZ; '<anahtar>.bad'
+   adıyla yanına kopyalar (elle kurtarma için), konsola tek satır uyarı yazar
+   ve undefined döner; çağıran taraf varsayılana düşer. */
+function _readJsonSafe(key) {
+    const raw = _zkRead(key);
+    if (raw === null || raw === undefined || raw === '') return undefined;
+    try {
+        const parsed = JSON.parse(raw);
+        return parsed === null ? undefined : parsed;
+    } catch (e) {
+        /* Kopya YALNIZCA bir kez yazılır: bozuk kayıt düzeltilene kadar her
+           açılışta tekrar yazmak depoyu şişirir (kota riski) ve konsolu
+           doldurur. Zaten kopya varsa sessizce varsayılana düşülür. */
+        try {
+            if (localStorage.getItem(key + '.bad') === null) {
+                localStorage.setItem(key + '.bad', raw);
+                console.warn('[veri] Bozuk kayıt yanına kopyalandı: ' + key + '.bad');
+            }
+        } catch (e2) { /* depo dolu */ }
+        return undefined;
+    }
+}
 
 function _setStoredValue(key, value) {
     /* Atlamanın ölçütü artık düz metin DEĞİL, RAM cache'idir: aynı düz metin
@@ -4492,6 +4770,49 @@ function initDashboardSplitters() {
         (_px, topPx) => { dashSplitY2 = topPx; }));
 }
 
+/* --- KATEGORİ RENK/ŞEKİL SÖZLÜĞÜ ------------------------------------------
+   Harita lejantı ile nokta katmanı AYNI kaynaktan beslenir; ikisinin
+   ayrışması imkânsız. Renkler aşama ekseninden (--stage-*) bağımsız bir
+   görsel eksendir: burada renk = TÜR (kategori), haritadaki nokta çeperi
+   aşama rengini kullanır. Böylece "mavi = ihale" ile "mavi = MSB"
+   çakışması ortadan kalkar.
+   rgb: CSS tarafında rgba(var(--mtf-rgb), α) olarak tüketilir.
+   shape: CSS'te nokta/kare/baklava/üçgen; renk körlüğü için ikinci kanal. */
+const MAP_TYPE_META = {
+    'MSB':              { rgb: '56, 189, 248',  shape: 'dot' },
+    'EGM':              { rgb: '45, 212, 191',  shape: 'square' },
+    'JGK':              { rgb: '139, 157, 255', shape: 'diamond' },
+    'KENTSEL':          { rgb: '251, 191, 36',  shape: 'triangle' },
+    'İDARE UYGULAMA':   { rgb: '163, 230, 53',  shape: 'bar' },
+    'TALEP':            { rgb: '251, 113, 133', shape: 'dot' }
+};
+/* Bilinmeyen/eklenmiş türler için kararlı bir renk: ad hash'inden türetilir,
+   böylece aynı tür her açılışta aynı rengi alır (rastgele değil). */
+const MAP_TYPE_FALLBACK_PALETTE = [
+    { rgb: '125, 211, 252', shape: 'dot' },
+    { rgb: '110, 231, 183', shape: 'square' },
+    { rgb: '196, 181, 253', shape: 'diamond' },
+    { rgb: '252, 211, 77',  shape: 'triangle' },
+    { rgb: '253, 164, 175', shape: 'bar' }
+];
+const _mapTypeMetaCache = new Map();
+
+function getMapTypeMeta(typeName) {
+    const key = String(typeName == null ? '' : typeName);
+    const cached = _mapTypeMetaCache.get(key);
+    if (cached) return cached;
+
+    let meta = MAP_TYPE_META[key];
+    if (!meta) {
+        /* Basit kararlı hash: aynı ada her zaman aynı palet girdisi düşer. */
+        let h = 0;
+        for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+        meta = MAP_TYPE_FALLBACK_PALETTE[h % MAP_TYPE_FALLBACK_PALETTE.length];
+    }
+    _mapTypeMetaCache.set(key, meta);
+    return meta;
+}
+
 function renderMapTypeFilters() {
     const container = document.getElementById('map-type-filter-container');
     if (!container) return;
@@ -4510,10 +4831,25 @@ function renderMapTypeFilters() {
     let htmlBuffer = validTypes.map(t => {
         const isActive = activeMapTypeFilter === t;
         const count = turCountMap[t] || 0;
+        /* GÖRSEL: satır artık pasif sayaç değil, LEJANT + FİLTRE. Her tür sabit
+           bir renk ve işaret ŞEKLİ taşır; haritadaki noktalar aynı rengi/şekli
+           kullanır. Seçili tür nabız halkasıyla ayrışır (yalnız renkle değil). */
+        const meta = getMapTypeMeta(t);
+        /* SIFIR SAYAÇ GÖRSEL OLARAK GERİ ÇEKİLİR: 6 çipin 5'i sıfırken hepsi
+           aynı kontrastta parlıyordu; ekran "veri yok" gibi okunuyordu.
+           Sıfır olan çip soluklaşır (ama tıklanabilir kalır — kullanıcı boş
+           bir türü de filtreleyip "gerçekten yok" diyebilmeli). Dolu çipler
+           tam kontrastta kalır, böylece göz önce gerçek veriyi görür.
+           Seçili çip her durumda tam kontrasttadır (.active ezer). */
+        const isZero = count === 0;
         return `
-            <button class="map-type-filter-btn ${isActive ? 'active' : ''}" onclick="setMapTypeFilter('${escapeJsAttr(t)}')">
+            <button class="map-type-filter-btn ${isActive ? 'active' : ''} ${isActive ? 'is-pulsing' : ''} ${isZero ? 'is-zero' : 'has-jobs'}"
+                    data-shape="${meta.shape}" style="--mtf-rgb:${meta.rgb};"
+                    title="${escapeJsAttr(t)} türündeki işleri haritada vurgula (${count} iş)"
+                    onclick="setMapTypeFilter('${escapeJsAttr(t)}')">
+                <span class="mtf-swatch"></span>
                 <span>${escapeHtml(t)}</span>
-                <span style="opacity:0.8; font-size:10px; font-weight:800;">(${count})</span>
+                <span class="mtf-count">(${count})</span>
             </button>
         `;
     }).join('');
@@ -4844,7 +5180,16 @@ function renderD3Map() {
         .data(geojsonData.features)
         .enter()
         .append("text")
-        .attr("class", "map-city-label")
+        .attr("class", d => {
+            /* İşi olmayan iller "is-empty" sınıfını alır: adları haritada soluk
+               yazılır (CSS .map-city-label.is-empty). Etiket yine çizilir —
+               kullanıcı tüm 81 ili okuyabilsin, dolu iller öne çıksın. */
+            const cName = d.properties.name || d.properties.NAME_1 || "";
+            const empty = activeMapTypeFilter
+                ? !(cityFilteredCountMap[cName] > 0)
+                : !(cityCountMap[cName] > 0);
+            return empty ? "map-city-label is-empty" : "map-city-label";
+        })
         /* Mürekkep INLINE STYLE olarak yazılıyor, `fill` özniteliği olarak
            değil: SVG'de bir CSS kuralı (`.map-city-label { fill: #fff }`)
            presentation attribute'ını da ezer. Yani attribute'a yazılan
@@ -4854,11 +5199,41 @@ function renderD3Map() {
         .style("fill", d => {
             return labelInk(d);
         })
+        /* KONTUR (halo): mürekkebin TERSİ yarı saydam renk. Beyaz yazı koyu
+           kontur, koyu yazı açık kontur alır; böylece il dolgusu yazının
+           kendi tonuna yaklaşsa bile ad zemininden ayrışır. Kontur, metnin
+           ALTINA dizilir (CSS paint-order: stroke) — harf kalınlaşmaz,
+           yalnız çevresi nefes alır. */
+        .style("stroke", d => {
+            return labelInk(d) === MAP_LABEL_LIGHT_INK
+                ? 'rgba(4, 10, 20, 0.85)'
+                : 'rgba(240, 248, 255, 0.85)';
+        })
+        /* Soluklaştırma INLINE yazılır (fill gibi), ama `fill-opacity` ile —
+           `opacity` DEĞİL: odak modunun `.map-city-label.map-focus-dim`
+           kuralı opacity: .1 veriyor, satır içi opacity onu ezerdi ve odak
+           modunda boş iller kısılmazdı. fill-opacity yalnız yazı boyasına
+           dokunur, odak bulanıklığı/soluklaşması çalışmaya devam eder. */
+        .style("fill-opacity", d => {
+            const cName = d.properties.name || d.properties.NAME_1 || "";
+            const empty = activeMapTypeFilter
+                ? !(cityFilteredCountMap[cName] > 0)
+                : !(cityCountMap[cName] > 0);
+            return empty ? 0.45 : null;
+        })
         .attr("transform", d => {
             const centroid = pathGenerator.centroid(d);
             return `translate(${centroid[0]}, ${centroid[1]})`;
         })
         .text(d => d.properties.name || d.properties.NAME_1 || "");
+
+    /* --- İŞARET KATMANI: illere göre nokta/küme -------------------------
+       Choropleth "nerede kaç iş var" sorusunu dolguyla yanıtlıyor ama
+       nokta yok: iller arası karşılaştırma için göz, 81 alanın tonunu
+       ezberlemek zorunda. Bu katman sayıyı DOĞRUDAN noktaya yazar.
+       Üç kademe (CSS 99.3): halo = yoğunluk, ring = aşama rengi, count = sayı.
+       pointer-events:none olduğu için tıklama alttaki poligonda kalır. */
+    renderMapMarkers(pathGenerator, cityCountMap, cityFilteredCountMap, maxCount);
 
     /* --- SEÇİLİ İL OVERLAY: kehribar pulse, TÜM katmanların üstünde ---
        Etiketlerden sonra eklenir: glow etiketin altına kalır, isim okunur kalır. */
@@ -4906,6 +5281,267 @@ function renderD3Map() {
    Seçim değişince, görünüm yeniden render olunca veya filtre değişince
    çağrılır; eski overlay her seferinde düşürülüp yeniden kurulur (sızıntı yok).
    ========================================================================== */
+/* ==========================================================================
+   HARİTA İŞARET KATMANI — illere göre nokta, küme ve nabız
+   --------------------------------------------------------------------------
+   SORUN: harita yalnızca choropleth (dolgu tonu) idi. "Hangi ilde kaç iş var"
+   sorusunun tek yanıtı 81 alanın tonunu ezberlemekti; 2 ile 5 iş arasındaki
+   fark gözle ayrılmıyordu.
+   ÇÖZÜM: her ilin centroid'ine üç kademeli bir işaret çizilir:
+     .mm-halo  → yarıçapı sayıyla büyüyen yoğunluk halkası
+     .mm-ring  → çeper rengi = BASKIN AŞAMA (mavi/teal/indigo/amber/rose/lime)
+     .mm-count → ortada sayı (küme göstergesi)
+   Kategori (tür) rengi ise halo tonuna verilir; filtre seçiliyken yalnız o
+   türün sayısı gösterilir. Renk iki ayrı ANLAM taşımaz: çeper aşama, halo tür.
+   PERF: pointer-events:none → tıklama alttaki poligonda kalır; katman tek
+   &lt;g&gt; içinde toplu kurulur, animasyon yalnız seçili ilde (1 öğe) çalışır.
+   ========================================================================== */
+const MAP_STAGE_RGB = {
+    'proje':     '45, 212, 191',
+    'ihale':     '56, 189, 248',
+    'yapım':     '139, 157, 255',
+    'yapim':     '139, 157, 255',
+    'beklemede': '251, 191, 36',
+    'iptal':     '251, 113, 133',
+    'bitti':     '163, 230, 53'
+};
+
+function getStageRgb(stageName) {
+    const key = String(stageName || '').toLocaleLowerCase('tr-TR').trim();
+    return MAP_STAGE_RGB[key] || '148, 180, 202';
+}
+
+function renderMapMarkers(pathGenerator, cityCountMap, cityFilteredCountMap, maxCount) {
+    if (!mapG) return;
+
+    /* Filtre varsa nokta katmanı YALNIZ o türün sayısını gösterir; aksi hâlde
+       filtrelenmiş harita ile noktalar çelişirdi. */
+    const usingFilter = !!activeMapTypeFilter;
+    const countFor = cityName => (usingFilter
+        ? (cityFilteredCountMap[cityName] || 0)
+        : (cityCountMap[cityName] || 0));
+
+    /* İl başına baskın aşama ve baskın tür: tek geçiş (PERF). */
+    const cityStage = new Map();
+    const cityTur = new Map();
+    const tally = new Map();
+    for (let i = 0; i < jobs.length; i++) {
+        const j = jobs[i];
+        if (!j || !j.il) continue;
+        const cName = String(j.il).trim();
+        if (!cName) continue;
+        const n = countFor(cName);
+        if (n <= 0) continue;
+
+        /* Filtre aktifken yalnız eşleşen kayıtlar oyu belirler. */
+        if (usingFilter && (j.tur || '-') !== activeMapTypeFilter) continue;
+
+        let bucket = tally.get(cName);
+        if (!bucket) { bucket = { stages: new Map(), turs: new Map(), total: 0 }; tally.set(cName, bucket); }
+        const st = String(j.asama || '').toLocaleLowerCase('tr-TR').trim();
+        bucket.stages.set(st, (bucket.stages.get(st) || 0) + 1);
+        const tr = String(j.tur || '-');
+        bucket.turs.set(tr, (bucket.turs.get(tr) || 0) + 1);
+        bucket.total++;
+    }
+
+    const topKey = mapObj => {
+        let best = null, bestN = -1;
+        mapObj.forEach((n, k) => { if (n > bestN) { bestN = n; best = k; } });
+        return best;
+    };
+    tally.forEach((bucket, cName) => {
+        cityStage.set(cName, topKey(bucket.stages));
+        cityTur.set(cName, topKey(bucket.turs));
+    });
+
+    const layer = mapG.append('g').attr('class', 'map-marker-layer');
+    const maxN = Math.max(1, usingFilter ? Math.max(1, ...Object.values(cityFilteredCountMap)) : maxCount);
+    const labelShiftByCity = new Map();
+
+    geojsonData.features.forEach(d => {
+        const cityName = (d.properties && (d.properties.name || d.properties.NAME_1)) || '';
+        const n = countFor(cityName);
+        if (n <= 0) return;
+
+        const centroid = pathGenerator.centroid(d);
+        if (!centroid || !Number.isFinite(centroid[0]) || !Number.isFinite(centroid[1])) return;
+
+        /* Ölçek: 1 iş → küçük nokta, en yoğun il → doygun halka (karekök
+           sönümlemesi; 1'e karşı 30 işte yarıçap patlamasın). */
+        const t = Math.sqrt(n) / Math.sqrt(maxN);
+        const ringR = 5.2 + t * 4.4;
+        /* Halo payı dar tutuldu: tek işli ilde halka komşu illeri yalayıp
+           hangi ilin vurgulandığını belirsizleştiriyordu (ölçüldü: 42px çap). */
+        const haloR = ringR + 2.6 + t * 3.6;
+
+        const tur = cityTur.get(cityName) || '-';
+        const typeMeta = getMapTypeMeta(tur);
+        const stageRgb = getStageRgb(cityStage.get(cityName) || '');
+
+        const g = layer.append('g')
+            .attr('class', 'map-marker')
+            .attr('data-city', cityName)
+            .attr('transform', `translate(${centroid[0]}, ${centroid[1]})`);
+
+        g.append('circle')
+            .attr('class', 'mm-halo')
+            .attr('r', haloR)
+            .style('--mm-rgb', typeMeta.rgb);
+
+        /* Seçili ilde amber nabız halkası: seçim artık yalnız konturla değil,
+           nokta üzerinde de okunur. */
+        if (selectedMapCity && cityName === selectedMapCity) {
+            g.append('circle')
+                .attr('class', 'mm-pulse')
+                .attr('r', ringR + 2.5);
+        }
+
+        g.append('circle')
+            .attr('class', 'mm-ring')
+            .attr('r', ringR)
+            .style('--mm-rgb', stageRgb);
+
+        /* Sayı yalnız okunabilecek kadar büyük halkalarda yazılır; küçük
+           noktada sayı lekeye döner (tooltip zaten sayıyı veriyor). */
+        if (ringR >= 6) {
+            g.append('text')
+                .attr('class', 'mm-count')
+                .style('font-size', `${Math.min(9.5, ringR * 1.15)}px`)
+                .text(n > 99 ? '99+' : String(n));
+        }
+
+        /* İl adı etiketi ile işaret çakışmasın: etiket işaretin altına iner.
+           Yalnız bir kez, render başına; zoom font-size'a dokunur, transform'a
+           dokunmaz — bu yüzden kayma zoom'da korunur. */
+        labelShiftByCity.set(cityName, ringR + 8.5);
+    });
+
+    /* --- ETİKET ÇAKIŞMA ÇÖZÜMÜ ------------------------------------------
+       Şehir merkezleri coğrafi olarak birbirine yakın olduğu için komşu il
+       adları üst üste biniyordu (Adana/Osmaniye, Batman/Siirt, Düzce/Sakarya…).
+       Etiketler centroid'e yazıldıktan sonra ekranda çakışan çiftler dikey
+       olarak birbirinden itilir. Dolu iller sabit kalır (işareti ve sayısı
+       olan etiket kaymamalı); boş iller esner, böylece soluk adlar kayarak
+       yerleşir ve hiçbir ad gizlenmez. Yalnız transform yazılır — layout yok. */
+    layoutMapCityLabels(pathGenerator, labelShiftByCity);
+}
+
+/* Etiketleri centroid + işaret kaydırmasıyla yerleştirir, sonra çakışanları
+   dikeyde iter. Font 10px kabul edilir (zoom font-size'ı ayrıca ölçekler,
+   transform'u değiştirmez); genişlik tahmini Türkçe adlar için yeterlidir. */
+function layoutMapCityLabels(pathGenerator, shiftMap) {
+    if (!mapG) return;
+    const nodes = mapG.selectAll('.map-city-label').nodes();
+    if (!nodes.length) return;
+
+    /* Gerçek metin yüksekliği 11px (getBBox ile ölçüldü). Satır aralığı 1.5px
+       nefes payıyla 12.5: tam 11.6 kullanıldığında adlar ölçümde "çakışmıyor"
+       ama kenar kenara değdiği için gözle sıkışık bir blok gibi okunuyordu. */
+    /* NOT: Düzen toleransı (LINE_H/GAP_X) etiketlerin METİN kutusuna göre
+       hesaplanır; SVG konturu getBoundingClientRect'e girmediği için
+       kontur eklemek bu hesabı değiştirmez. Toleransı büyütmek itmeyi
+       sertleştirip 1024px'te çakışmayı 3 -> 6 çifte çıkardığı için
+       değerler kontur öncesi hâlinde bırakıldı. */
+    const LINE_H = 12.5;
+    const GAP_X = 2.5;   /* yatayda da en az bu kadar boşluk bırakılır */
+    const MAX_SHIFT = 26; /* toplam dikey itme sınırı (harita birimi) */
+
+    const items = [];
+    nodes.forEach(node => {
+        const props = (node.__data__ && node.__data__.properties) || {};
+        const nm = props.name || props.NAME_1 || '';
+        const c = pathGenerator.centroid(node.__data__);
+        if (!c || !isFinite(c[0]) || !isFinite(c[1])) return;
+        const y0 = c[1] + ((shiftMap && shiftMap.get(nm)) || 0);
+        items.push({
+            node,
+            nm,
+            x: c[0],
+            y0,
+            y: y0,
+            /* Ölçümle: getBBox gerçek yazı genişliğini verir. Karakter sayısı
+               tahmini (5.35px/harf) Türkçe uzun adlarda yetersiz kalıyordu. */
+            w: Math.max(11, node.getBBox().width),
+            h: LINE_H,
+            /* Dolu il sabit: işaretiyle birlikte duruyor. */
+            fixed: !node.classList.contains('is-empty')
+        });
+    });
+
+    /* Çakışma çözümü: alttaki (boş) etiket itilir. Sınırlı sayıda tur —
+       yakınsamazsa kalan binişme kabul edilir, sonsuz döngü riski yok. */
+    for (let iter = 0; iter < 24; iter++) {
+        let moved = false;
+        for (let i = 0; i < items.length; i++) {
+            for (let j = i + 1; j < items.length; j++) {
+                const a = items[i], b = items[j];
+                const dx = Math.abs(a.x - b.x);
+                const dy = Math.abs(a.y - b.y);
+                const needX = (a.w + b.w) / 2 + GAP_X;
+                if (dx >= needX || dy >= LINE_H) continue;
+                if (a.fixed && b.fixed) continue;
+
+                const push = (LINE_H - dy) + 0.35;
+                /* Sabit olan yerinde kalır; esnek olan(lar) birbirinden uzaklaşır.
+                   Eşit yükseklikte yön belirsizse ad sırasına göre karar verilir
+                   (deterministik olsun diye). */
+                const aUp = a.y < b.y || (a.y === b.y && a.nm <= b.nm);
+                if (a.fixed && b.fixed) continue;
+                if (a.fixed) {
+                    b.y += aUp ? push : -push;
+                } else if (b.fixed) {
+                    a.y += aUp ? -push : push;
+                } else {
+                    a.y += aUp ? -push / 2 : push / 2;
+                    b.y += aUp ? push / 2 : -push / 2;
+                }
+                moved = true;
+            }
+        }
+        if (!moved) break;
+    }
+
+    /* SON GEÇİŞ: kırpma döngünün İÇİNDE yapıldığında, sınıra dayanmış bir
+       etiket her turda geri çekiliyor ve itme yakınsamıyordu (1024px'te
+       3 çift 1.5–3.8px binişle kalıyordu). Önce kırpmasız birkaç tur daha
+       çalıştırılıp gerçekten ayrışmaları sağlanır; sınır en sonda bir kez
+       uygulanır. Kırpma sonrası oluşabilecek artık binişme için pencere
+       MAX_SHIFT + LINE_H kadar esnetilir (haritadan kaçmayı yine önler). */
+    for (let iter = 0; iter < 12; iter++) {
+        let moved = false;
+        for (let i = 0; i < items.length; i++) {
+            for (let j = i + 1; j < items.length; j++) {
+                const a = items[i], b = items[j];
+                if (Math.abs(a.x - b.x) >= (a.w + b.w) / 2 + GAP_X) continue;
+                const dy = Math.abs(a.y - b.y);
+                if (dy >= LINE_H) continue;
+                if (a.fixed && b.fixed) continue;
+                const push = (LINE_H - dy) + 0.35;
+                const aUp = a.y < b.y || (a.y === b.y && a.nm <= b.nm);
+                if (a.fixed) b.y += aUp ? push : -push;
+                else if (b.fixed) a.y += aUp ? -push : push;
+                else { a.y += aUp ? -push / 2 : push / 2; b.y += aUp ? push / 2 : -push / 2; }
+                moved = true;
+            }
+        }
+        if (!moved) break;
+    }
+
+    /* Sınırı aşanları topla: haritadan kaçmasınlar. */
+    const limit = MAX_SHIFT + LINE_H;
+    items.forEach(it => {
+        const lo = it.y0 - limit;
+        const hi = it.y0 + limit;
+        if (it.y < lo) it.y = lo;
+        if (it.y > hi) it.y = hi;
+    });
+
+    items.forEach(it => {
+        it.node.setAttribute('transform', `translate(${it.x.toFixed(2)}, ${it.y.toFixed(2)})`);
+    });
+}
+
 function renderSelectedCityOverlay(pathGenerator) {
     if (!mapG) return;
 
@@ -6103,11 +6739,6 @@ function statsToggleYear(year) {
     statsSetFilter({ year: statsFilter.year === year ? null : year });
 }
 
-/** Araç çubuğu arama kutusuna yazar (bilgisayar klavyesinden). */
-function statsSetQuery(q) {
-    statsSetFilter({ q: q });
-}
-
 function collectStatsData() {
     const D = {
         total: jobs.length,
@@ -6268,7 +6899,13 @@ function renderStatisticsView() {
     const intro = document.getElementById('stats-intro');
     if (!jobs.length) {
         if (chip) chip.innerHTML = '<i class="fa-solid fa-database"></i> Kayıt yok';
-        if (intro) intro.innerHTML = 'Henüz iş kaydı yok. <strong>Tüm İşler</strong> ekranından kayıt ekleyin; istatistikler otomatik hesaplanır.';
+        if (intro) intro.innerHTML = `
+                <div class="dash-empty">
+                    <span class="de-illu"><i class="fa-solid fa-chart-simple"></i></span>
+                    <span class="de-title">Henüz iş kaydı yok</span>
+                    <span class="de-sub">Tüm İşler ekranından kayıt ekleyin; istatistikler kaydedildikçe otomatik hesaplanır.</span>
+                    <button class="de-cta is-ghost" onclick="navigateTo('projects')"><i class="fa-solid fa-list-ul"></i> İş listesine git</button>
+                </div>`;
         grid.innerHTML = '';
         return;
     }
@@ -7301,6 +7938,70 @@ const PANEL_GUIDE = {
 
 const PANEL_GUIDE_KEY = 'yaser_v10_panel_guide_hidden';
 
+/* ==========================================================================
+   PANEL TURU — adım göstergeli, yönlendirmeli balon
+   --------------------------------------------------------------------------
+   Öncesi: balon haritanın üstünde ortadaydı, en değerli bölgeyi kapatıyordu
+   ve "kaç adım kaldı" bilinmiyordu. CSS (99.8) balonu sağ alta taşıdı;
+   burada adım sayacı, İleri/Geri/Geç düğmeleri ve oturum-içi gezinti eklenir.
+   Adımlar, kullanıcının panelde gerçekten gidebileceği görünümlerdir.
+   ========================================================================== */
+const GUIDE_TOUR = ['home', 'projects', 'stats', 'tasks', 'settings'];
+let guideTourActive = false;
+
+function guideStepHtml(viewId) {
+    const idx = GUIDE_TOUR.indexOf(viewId);
+    if (idx < 0) return '';
+
+    const foot = document.createElement('div');
+    foot.className = 'panel-guide-foot';
+
+    const step = document.createElement('span');
+    step.className = 'panel-guide-step';
+    step.textContent = (idx + 1) + ' / ' + GUIDE_TOUR.length;
+
+    const prev = document.createElement('button');
+    prev.type = 'button';
+    prev.className = 'panel-guide-nav';
+    prev.textContent = '‹ Geri';
+    prev.disabled = idx === 0;
+    prev.onclick = () => navigateTo(GUIDE_TOUR[idx - 1]);
+
+    const next = document.createElement('button');
+    next.type = 'button';
+    next.className = 'panel-guide-nav';
+    next.textContent = idx === GUIDE_TOUR.length - 1 ? 'Bitti' : 'İleri ›';
+    next.onclick = () => {
+        if (idx === GUIDE_TOUR.length - 1) {
+            guideTourActive = false;
+            const box = document.getElementById('panel-guide-box');
+            if (box) box.style.display = 'none';
+            document.body.classList.remove('panel-guide-open');
+            try { localStorage.setItem(PANEL_GUIDE_KEY, '1'); } catch (e) { /* yoksay */ }
+            return;
+        }
+        navigateTo(GUIDE_TOUR[idx + 1]);
+    };
+
+    const skip = document.createElement('button');
+    skip.type = 'button';
+    skip.className = 'panel-guide-skip';
+    skip.textContent = 'Turu geç';
+    skip.onclick = () => {
+        guideTourActive = false;
+        const box = document.getElementById('panel-guide-box');
+        if (box) box.style.display = 'none';
+        document.body.classList.remove('panel-guide-open');
+        try { localStorage.setItem(PANEL_GUIDE_KEY, '1'); } catch (e) { /* yoksay */ }
+    };
+
+    foot.appendChild(step);
+    foot.appendChild(prev);
+    foot.appendChild(next);
+    foot.appendChild(skip);
+    return foot;
+}
+
 function renderPanelGuide(viewId) {
     const info = PANEL_GUIDE[viewId];
     const el = document.getElementById('view-' + viewId);
@@ -7317,8 +8018,14 @@ function renderPanelGuide(viewId) {
 
     let hidden = false;
     try { hidden = localStorage.getItem(PANEL_GUIDE_KEY) === '1'; } catch (e) { /* private mod */ }
-    box.style.display = hidden ? 'none' : 'flex';
+    /* Tur "Bitti"ye kadar açık kalır: adımlar arasında gezinirken balonun
+       kapanmaması gerekir, aksi hâlde her adımda yeniden açmak gerekirdi. */
+    box.style.display = (hidden && !guideTourActive) ? 'none' : 'flex';
     box.dataset.view = viewId;
+    /* Tur kartı sağ altta sabit; alttaki panellerin içeriğini örtmesin diye
+       gövdeye işaret sınıfı konur ve CSS o panellere alt boşluk verir
+       (99.17). Sınıf tek yerden, görünürlükle birlikte yönetilir. */
+    document.body.classList.toggle('panel-guide-open', box.style.display !== 'none');
 
     /* İçerik her seferde yeniden yazılır; XSS için metin DÜZ yazılır, innerHTML
        kullanılmaz. Panel açıklamaları sabit tanımlar olsa da burada kullanıcı
@@ -7340,12 +8047,17 @@ function renderPanelGuide(viewId) {
     close.textContent = '×';
     close.onclick = function () {
         box.style.display = 'none';
+        document.body.classList.remove('panel-guide-open');
+        guideTourActive = false;
         try { localStorage.setItem(PANEL_GUIDE_KEY, '1'); } catch (e) { /* yoksay */ }
     };
 
     box.appendChild(label);
     box.appendChild(body);
     box.appendChild(close);
+
+    const foot = guideStepHtml(viewId);
+    if (foot) box.appendChild(foot);
 }
 
 function navigateTo(targetView) {
@@ -7366,6 +8078,15 @@ function navigateTo(targetView) {
 
     if (!nextEl) return;
 
+    /* GÖRSEL: geçiş yönü. Menü sırasına göre ileri/geri ayrılır; CSS yalnız
+       transform+opacity oynatır (compositor), süre 130-170 ms. */
+    const order = GUIDE_TOUR;
+    const fromIdx = order.indexOf(activeView);
+    const toIdx = order.indexOf(targetView);
+    const dirClass = (fromIdx >= 0 && toIdx >= 0 && toIdx < fromIdx) ? 'fx-dir-back' : 'fx-dir-fwd';
+    document.body.dataset.view = targetView;
+    document.body.classList.toggle('fx-dir-back', dirClass === 'fx-dir-back');
+
     document.querySelectorAll('.menu-item').forEach(el => el.classList.remove('active'));
     const navItem = document.getElementById('nav-' + targetView);
     if (navItem) navItem.classList.add('active');
@@ -7385,7 +8106,20 @@ function navigateTo(targetView) {
     renderCurrentView();
 
     nextEl.classList.add('active');
-    updateMenuIndicator();
+
+    /* PERF: updateMenuIndicator() iki getBoundingClientRect() çağırır. Bu
+       çağrılar renderCurrentView()'un yazdığı DOM'un HEMEN ardından
+       yapıldığında tarayıcı bekleyen tüm stil/layout işini senkron olarak
+       bitirmek zorunda kalıyordu; 300 satırlık tabloda ölçülen maliyet
+       173 ms (profilde en yüksek self-time). Menü göstergesi bir sonraki
+       kareye ertelendiğinde tarayıcı aynı layout'u kare çiziminin doğal
+       parçası olarak BİR kez yapar. Görsel fark yok: gösterge zaten
+       geçiş animasyonuyla kayıyor. */
+    if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => updateMenuIndicator());
+    } else {
+        updateMenuIndicator();
+    }
 
     if (targetView === 'home') {
         setTimeout(() => {
@@ -7394,11 +8128,6 @@ function navigateTo(targetView) {
             }
         }, 50);
     }
-}
-
-function navigateToSettingsTab(tabName) {
-    navigateTo('settings');
-    switchSettingsTab(tabName);
 }
 
 function switchSettingsTab(tabName) {
@@ -7456,6 +8185,10 @@ function switchSettingsTab(tabName) {
     } else if (tabName === 'screensaver') {
         saverContent.style.display = 'flex';
         if (btnSaver) btnSaver.classList.add('active');
+        /* Arka plan kontrolleri her açılışta kayıtlı değerlerle eşitlenir:
+           başka bir sekmede değişiklik yapılmış olsa bile panel doğru
+           durumu gösterir. */
+        syncBgControls();
     } else if (tabName === 'countdown') {
         if (countdownContent) countdownContent.style.display = 'flex';
         if (btnCountdown) btnCountdown.classList.add('active');
@@ -7555,11 +8288,19 @@ function updateGlobalCounts() {
 
     /* Ana ekran 2x2 panellerini de tazele: updateGlobalCounts her veri
        değişiminde (görev işaretle/sil/ekle, aktif iş seç/çıkar, undo,
-       gece devri) çağrıldığı için tek noktadan tutarlılık sağlanır. */
-    if (typeof renderDashActivePanel === 'function') renderDashActivePanel();
-    if (typeof renderDashDataPanel === 'function') renderDashDataPanel();
-    if (typeof renderDashDeadlinePanel === 'function') renderDashDeadlinePanel();
-    if (typeof renderDashTodayPanel === 'function') renderDashTodayPanel();
+       gece devri) çağrıldığı için tek noktadan tutarlılık sağlanır.
+
+       PERF: Bu dört panel YALNIZCA ana ekranda görünür. Önceden görünüm ne
+       olursa olsun her sayaç güncellemesinde yeniden çiziliyorlardı; başka bir
+       ekranda 300 iş kaydı varken tek bir görev işaretlemesi bile görünmeyen
+       dört panelin innerHTML'ini yeniden kuruyordu (ölçüldü: ~13 ms). Artık
+       yalnızca ana ekranda çizilirler. */
+    if (activeView === 'home') {
+        if (typeof renderDashActivePanel === 'function') renderDashActivePanel();
+        if (typeof renderDashDataPanel === 'function') renderDashDataPanel();
+        if (typeof renderDashDeadlinePanel === 'function') renderDashDeadlinePanel();
+        if (typeof renderDashTodayPanel === 'function') renderDashTodayPanel();
+    }
 
     renderTickerBar();
 }
@@ -7596,25 +8337,22 @@ function updateMenuIndicator() {
    huzmesiyle (fxMenuItemSettle) belli edilir. Bkz. CSS 10.3. */
 
 /* FX: VIEW EXIT - giden ekrana kisa bir cikis verir.
-   CSS tarafinda .fx-view-exit kendi display:flex degerini ve kendi
-   animasyonunu tasir; bu yuzden burada .active EKLENMEZ (eklenirse .active
-   kurali fxViewEnter'i uygular ve cikis hicbir zaman tetiklenmez).
+   CSS tarafinda .fx-view-exit artik absolute overlay + kendi cikis
+   animasyonunu tasir (bkz. CSS 99.13); bu yuzden burada .active EKLENMEZ
+   (eklenirse .active kurali giris animasyonunu uygular ve cikis hic tetiklenmez).
    navigateTo() .active'i kaldirdiktan SONRA bunu cagirir. */
 function playFxViewExit(el) {
     if (!el) return;
     const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduceMotion) return;
     el.classList.add('fx-view-exit');
     const cleanup = () => {
         el.classList.remove('fx-view-exit');
         el.removeEventListener('animationend', cleanup);
     };
     el.addEventListener('animationend', cleanup);
-    /* Guvenlik agi: animasyon hicbir sekilde tetiklenmezse (sekme gizli,
-       display:none, vb.) sinif 400ms sonra yine de temizlenir. Aksi halde
-       gizli view uzerinde .fx-view-exit birikerek display:flex kalir ve
-       ekranlarda ust uste binme olur. */
-    setTimeout(cleanup, 400);
+    /* Guvenlik agi: animasyon tetiklenmezse (sekme gizli, display:none, vb.)
+       sinif yine de temizlenir; aksi halde gizli view uzerinde birikir. */
+    setTimeout(cleanup, reduceMotion ? 60 : 320);
 }
 
 /* GLOBAL RIPPLE: tıklama noktasından yayılan cyan halka */
@@ -7851,14 +8589,10 @@ function renderCurrentView() {
     else if (activeView === 'stats') renderStatisticsView();
     else if (activeView === 'settings') renderSettingsPage();
 
-    /* Ana ekran panelleri (aktif işler / veri tamamlama / bugünkü işler):
-       yalnızca home görünümündeyken çizilir. */
-    if (activeView === 'home') {
-        renderDashActivePanel();
-        renderDashDataPanel();
-        renderDashDeadlinePanel();
-        renderDashTodayPanel();
-    }
+    /* Ana ekran panelleri burada AYRICA çizilmez: yukarıdaki
+       updateGlobalCounts() bunu zaten ana ekranda yapıyor. Önceden aynı dört
+       panel her geçişte iki kez üst üste kuruluyordu (ölçüldü: ~12 ms fazladan
+       innerHTML + layout). */
 
     /* FX: Yeniden cizilen kartlara isil parlama (fx-sheen) tekrar eklenir.
        Kartlar innerHTML ile yeniden kuruldugu icin onceki span kaybolur; bu
@@ -8266,8 +9000,10 @@ function renderActiveJobsTable() {
     const tbody = document.getElementById('active-jobs-table-body'); 
     if (!tbody) return;
     
-    const strActiveIds = activeJobIds.map(String);
-    const activeList = jobs.filter(j => strActiveIds.includes(String(j.id)));
+    /* PERF: `activeJobIds.map(String)` + her iş için `includes()` O(iş × aktif)
+       taramasıydı (300 iş × 100 aktif = 30.000 karşılaştırma). Set ile O(1). */
+    const strActiveIds = new Set(activeJobIds.map(String));
+    const activeList = jobs.filter(j => strActiveIds.has(String(j.id)));
     const activeVisible = globalSearchQuery
         ? activeList.filter(j => jobMatchesSearch(j))
         : activeList;
@@ -8294,11 +9030,11 @@ function renderActiveJobsTable() {
         return `
             <tr class="table-row-hover ${getRowStripeClass(j.asama)}" onclick="openJobModal('${j.id}')" data-job-id="${j.id}">
                 <td class="col-number-cell">${index + 1}</td>
-                <td><span class="tag" style="background:rgba(59,130,246,0.15); color:var(--color-primary);">${escapeHtml(j.section || '250Bin')}</span></td>
-                <td><span class="tag" style="background:rgba(139,92,246,0.15); color:var(--color-violet);">${escapeHtml(j.tur || '-')}</span></td>
-                <td class="col-il-ilce-cell"><strong style="color:var(--txt-main); font-weight:700;">${escapeHtml(j.il)}</strong><br><small style="color:var(--txt-muted); font-weight:500;">${escapeHtml(j.ilce)}</small></td>
+                <td><span class="tag tag-section">${escapeHtml(j.section || '250Bin')}</span></td>
+                <td><span class="tag tag-tur">${escapeHtml(j.tur || '-')}</span></td>
+                <td class="col-il-ilce-cell"><strong class="cell-ink-main">${escapeHtml(j.il)}</strong><br><small class="cell-ink-muted-500">${escapeHtml(j.ilce)}</small></td>
                 <td><strong>${escapeHtml(j.is_tanimi)}</strong></td>
-                <td><strong style="color:var(--txt-main); font-weight:600;">${escapeHtml(j.proje)}</strong><br><small style="color:var(--txt-muted); font-weight:500;">${escapeHtml(j.alt_yuklenici)}</small></td>
+                <td><strong class="cell-ink-main-600">${escapeHtml(j.proje)}</strong><br><small class="cell-ink-muted-500">${escapeHtml(j.alt_yuklenici)}</small></td>
                 <td>
                     <span class="stage-status-wrap">
                         <span class="status-badge ${badgeClass}">
@@ -9079,6 +9815,15 @@ function resetExcelFilters() {
 }
 
 /* DÜZELTİLDİ: SIRA NUMARASI SÜTUNU DAHİL EDİLEREK LİSTELEME APAYRI HALE GETİRİLDİ */
+function resetProjectTableFilters() {
+    /* Boş durum CTA'sı: arama + kolon süzgeçlerini birlikte temizler.
+       İkisi ayrı yerlerde tutulduğu için tek çağrıda ikisi de sıfırlanmalı;
+       yalnız birini temizlemek tabloyu yine boş bırakırdı. */
+    selectedExcelFilters = {};
+    clearGlobalSearch();
+    renderProjectsTable();
+}
+
 function renderProjectsTable() {
     const tbody = document.getElementById('projects-table-body'); 
     if (!tbody) return;
@@ -9102,7 +9847,23 @@ function renderProjectsTable() {
     });
 
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--txt-muted); padding:10px;">Görüntülenecek iş kaydı bulunamadı.</td></tr>`; 
+        /* GÖRSEL: düz gri tek satır yerine tasarlanmış boş durum. Filtre
+           aktifken ayrı metin/CTA verilir; "kayıt yok" ile "filtre boş
+           bıraktı" aynı şey değildir ve kullanıcı yanlış yere bakmasın. */
+        const hasFilter = !!globalSearchQuery || Object.keys(selectedExcelFilters).length > 0;
+        tbody.innerHTML = `
+            <tr><td colspan="8" class="table-empty-cell">
+                <div class="dash-empty">
+                    <span class="de-illu"><i class="fa-solid ${hasFilter ? 'fa-filter-circle-xmark' : 'fa-folder-open'}"></i></span>
+                    <span class="de-title">${hasFilter ? 'Süzgeçle eşleşen iş yok' : 'Henüz iş kaydı yok'}</span>
+                    <span class="de-sub">${hasFilter
+                        ? 'Arama metnini kısaltın veya kolon süzgeçlerini temizleyin.'
+                        : 'İlk kaydı ekleyerek tabloyu doldurun; alanlar kaydedildikçe harita ve istatistikler de beslenir.'}</span>
+                    ${hasFilter
+                        ? '<button class="de-cta is-ghost" onclick="resetProjectTableFilters()"><i class="fa-solid fa-eraser"></i> Süzgeçleri temizle</button>'
+                        : '<button class="de-cta" onclick="openJobModal()"><i class="fa-solid fa-plus"></i> Yeni iş kaydı</button>'}
+                </div>
+            </td></tr>`;
         return;
     }
 
@@ -9111,13 +9872,13 @@ function renderProjectsTable() {
         const isMissingInfo = checkJobMissingInfo(j);
         
         return `
-            <tr class="table-row-hover ${getRowStripeClass(j.asama)}" onclick="openJobModal('${j.id}')" data-job-id="${j.id}">
+            <tr class="table-row-hover ${getRowStripeClass(j.asama)}" style="--row-stage-rgb:${getStageRgb(j.asama)};" onclick="openJobModal('${j.id}')" data-job-id="${j.id}">
                 <td class="col-number-cell">${index + 1}</td>
-                <td><span class="tag" style="background:rgba(59,130,246,0.15); color:var(--color-primary);">${escapeHtml(j.section || '250Bin')}</span></td>
-                <td><span class="tag" style="background:rgba(139,92,246,0.15); color:var(--color-violet);">${escapeHtml(j.tur || '-')}</span></td>
-                <td class="col-il-ilce-cell"><strong style="color:var(--txt-main); font-weight:700;">${escapeHtml(j.il)}</strong><br><small style="color:var(--txt-muted); font-weight:500;">${escapeHtml(j.ilce)}</small></td>
-                <td class="project-desc-cell"><strong style="color:var(--txt-muted); font-weight:600;">${escapeHtml(j.is_tanimi)}</strong></td>
-                <td><strong style="color:var(--txt-main); font-weight:600;">${escapeHtml(j.proje)}</strong><br><small style="color:var(--txt-muted); font-weight:500;">${escapeHtml(j.alt_yuklenici)}</small></td>
+                <td><span class="tag tag-section">${escapeHtml(j.section || '250Bin')}</span></td>
+                <td><span class="tag tag-tur">${escapeHtml(j.tur || '-')}</span></td>
+                <td class="col-il-ilce-cell"><strong class="cell-ink-main"><i class="fa-solid fa-location-dot row-pin"></i>${escapeHtml(j.il)}</strong><br><small class="cell-ink-muted-500">${escapeHtml(j.ilce)}</small></td>
+                <td class="project-desc-cell"><strong class="cell-ink-muted">${escapeHtml(j.is_tanimi)}</strong></td>
+                <td><strong class="cell-ink-main-600">${escapeHtml(j.proje)}</strong><br><small class="cell-ink-muted-500">${escapeHtml(j.alt_yuklenici)}</small></td>
                 <td>
                     <span class="stage-status-wrap">
                         <span class="status-badge ${badgeClass}">
@@ -9128,7 +9889,7 @@ function renderProjectsTable() {
                     </span>
                 </td>
                 <td onclick="event.stopPropagation();">
-                    <div class="action-btns" style="justify-content:center;">
+                    <div class="action-btns is-centered">
                         <button class="btn-icon" title="Detay" onclick="event.stopPropagation(); viewJobDetail('${j.id}')"><i class="fa-solid fa-eye"></i></button>
                         <button class="btn-icon" title="Düzenle" onclick="event.stopPropagation(); openJobModal('${j.id}')"><i class="fa-solid fa-pen"></i></button>
                         <button class="btn-icon" title="Dış Form Linki Kopyala" onclick="event.stopPropagation(); copyGuestFormLink('${j.id}')"><i class="fa-solid fa-link"></i></button>
@@ -9141,16 +9902,55 @@ function renderProjectsTable() {
     tbody.innerHTML = htmlBuffer;
     _applyStaggerIndex(tbody, 20);
 
+    _wireJobRowHover(tbody);
+}
+
+/* UZMAN KADROSU İPUCU — DELEGE DİNLEYİCİ
+   --------------------------------------------------------------------------
+   Önceden her render'da satır başına 3 dinleyici bağlanıyordu (300 satır =
+   900 addEventListener + 900 kapanış nesnesi). Satırlar zaten her render'da
+   yeniden kurulduğu için bu dinleyiciler de çöpe gidiyordu.
+
+   Artık dinleyici tbody üzerinde BİR kez durur ve olayı hedef satıra kadar
+   yürütür. Davranış birebir aynıdır: mouseenter/mouseleave yalnızca satıra
+   girip çıkarken tetiklenir (satır içi hücreler arası geçişte değil), çünkü
+   "son satır" referansı tutulur. */
+function _wireJobRowHover(tbody) {
+    if (!tbody || tbody.dataset.hoverWired === '1') return;
+    tbody.dataset.hoverWired = '1';
+
     const tooltip = document.getElementById('experts-hover-tooltip');
-    tbody.querySelectorAll('.table-row-hover').forEach(row => {
-        row.addEventListener('mouseenter', (e) => {
-            const id = row.getAttribute('data-job-id'); const j = jobs.find(x => String(x.id) === String(id)); if (!j) return;
-            const ex = j.experts || {};
-            tooltip.innerHTML = `<strong>Proje Sorumlu Kadrosu:</strong>• ${customHeaderTitles.mimari || 'MİMARİ'}: ${ex.mimari || '-'}<br>• ${customHeaderTitles.statik || 'STATİK'}: ${ex.statik || '-'}<br>• ${customHeaderTitles.mekanik || 'MEKANİK'}: ${ex.mekanik || '-'}<br>• ${customHeaderTitles.elektrik || 'ELEKTRİK'}: ${ex.elektrik || '-'}<br>• ${customHeaderTitles.altyapi || 'ALTYAPI'}: ${ex.altyapi || '-'}<br>• ${customHeaderTitles.peyzaj || 'PEYZAJ'}: ${ex.peyzaj || '-'}`;
-            tooltip.style.display = 'block';
-        });
-        row.addEventListener('mousemove', (e) => { tooltip.style.left = (e.clientX + 12) + 'px'; tooltip.style.top = (e.clientY + 12) + 'px'; });
-        row.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+    let lastRow = null;
+
+    tbody.addEventListener('mouseover', (e) => {
+        const row = e.target.closest ? e.target.closest('tr.table-row-hover') : null;
+        if (!row || row === lastRow || !tooltip) return;
+        lastRow = row;
+        const id = row.getAttribute('data-job-id');
+        const j = jobs.find(x => String(x.id) === String(id));
+        if (!j) return;
+        const ex = j.experts || {};
+        tooltip.innerHTML = `<strong>Proje Sorumlu Kadrosu:</strong>• ${customHeaderTitles.mimari || 'MİMARİ'}: ${ex.mimari || '-'}<br>• ${customHeaderTitles.statik || 'STATİK'}: ${ex.statik || '-'}<br>• ${customHeaderTitles.mekanik || 'MEKANİK'}: ${ex.mekanik || '-'}<br>• ${customHeaderTitles.elektrik || 'ELEKTRİK'}: ${ex.elektrik || '-'}<br>• ${customHeaderTitles.altyapi || 'ALTYAPI'}: ${ex.altyapi || '-'}<br>• ${customHeaderTitles.peyzaj || 'PEYZAJ'}: ${ex.peyzaj || '-'}`;
+        tooltip.style.display = 'block';
+    });
+
+    tbody.addEventListener('mousemove', (e) => {
+        if (!tooltip || !lastRow) return;
+        /* PERF: style.left/top yazımı kare başına bir kez değil, olay başına
+           bir kez yapılır; konumlandırma zaten fixed olduğu için layout
+           tetiklemez. */
+        tooltip.style.left = (e.clientX + 12) + 'px';
+        tooltip.style.top = (e.clientY + 12) + 'px';
+    }, { passive: true });
+
+    tbody.addEventListener('mouseout', (e) => {
+        const row = e.target.closest ? e.target.closest('tr.table-row-hover') : null;
+        if (!row) return;
+        /* Satır içindeki bir hücreye geçişte mouseout da tetiklenir; hedef
+           hâlâ aynı satırın içindeyse ipucu kapatılmaz. */
+        if (e.relatedTarget && row.contains(e.relatedTarget)) return;
+        lastRow = null;
+        if (tooltip) tooltip.style.display = 'none';
     });
 }
 
@@ -9766,10 +10566,10 @@ function updateDeadlineFieldsVisibility() {
             : left < 0 ? ` — <b style="color:var(--color-rose);">${Math.abs(left)} gün gecikti</b>`
             : left === 0 ? ' — teslim <b>bugün</b>'
             : ` — teslime <b>${left} gün</b> kaldı`;
-        hint.innerHTML = `<i class="fa-solid fa-circle-info"></i> Süre: <b>${total} gün</b>${leftTxt}. Dashboard'daki <b>Deadline</b> panelinde gösterilir.`;
+        hint.innerHTML = `<i class="fa-solid fa-circle-info"></i> Süre: <b>${total} gün</b>${leftTxt}. Genel Bakış'taki <b>Teslim Tarihleri</b> panelinde gösterilir.`;
         return;
     }
-    hint.innerHTML = '<i class="fa-solid fa-circle-info"></i> Bu tarihler yalnız <b>Proje</b> aşamasında tutulur ve Dashboard\'daki <b>Deadline</b> panelinde süre dolumu olarak gösterilir.';
+    hint.innerHTML = '<i class="fa-solid fa-circle-info"></i> Bu tarihler yalnız <b>Proje</b> aşamasında tutulur ve Genel Bakış\'taki <b>Teslim Tarihleri</b> panelinde süre dolumu olarak gösterilir.';
 }
 
 /* İŞ MODALI — İle göre otomatik ısı bölgesi bilgi bulutu */
@@ -11429,8 +12229,9 @@ function renderDashActivePanel() {
     const chipIhale = document.getElementById('das-chip-ihale');
     const chipYapim = document.getElementById('das-chip-yapim');
 
-    const strActiveIds = activeJobIds.map(String);
-    const activeList = jobs.filter(j => strActiveIds.includes(String(j.id)));
+    /* PERF: Set üzerinden O(1) üyelik (bkz. renderActiveJobsTable). */
+    const strActiveIds = new Set(activeJobIds.map(String));
+    const activeList = jobs.filter(j => strActiveIds.has(String(j.id)));
 
     let nProje = 0, nIhale = 0, nYapim = 0;
     activeList.forEach(j => {
@@ -11451,7 +12252,13 @@ function renderDashActivePanel() {
     setChip(chipYapim, nYapim);
 
     if (activeList.length === 0) {
-        rowsEl.innerHTML = '<div class="dash-empty"><i class="fa-solid fa-bolt"></i><span>Aktif iş seçilmedi. Sağ üstteki + ile iş ekleyin.</span></div>';
+        rowsEl.innerHTML = `
+            <div class="dash-empty">
+                <span class="de-illu"><i class="fa-solid fa-bolt"></i></span>
+                <span class="de-title">Aktif iş seçilmedi</span>
+                <span class="de-sub">İş listesinden bir kaydı aktif listeye alın; bu panel seçtiğiniz işlerin aşama özetini gösterir.</span>
+                <button class="de-cta is-ghost" onclick="navigateTo('active-jobs')"><i class="fa-solid fa-arrow-right"></i> Aktif işlere git</button>
+            </div>`;
         return;
     }
 
@@ -11557,7 +12364,15 @@ function renderDashDeadlinePanel() {
     }
 
     if (items.length === 0) {
-        rowsEl.innerHTML = '<div class="dash-empty"><i class="fa-solid fa-hourglass-half"></i><span>Takvim tarihi girilmiş <b>Proje</b> aşamasında iş yok.<br><small style="opacity:.7">İş kaydında aşama “Proje” iken başlangıç ve teslim tarihlerini doldurun.</small></span></div>';
+        /* GÖRSEL: tasarlanmış boş durum — halka illüstrasyon, başlık, açıklama
+           ve doğrudan kayda götüren CTA. Düz gri cümle yerine eylem verir. */
+        rowsEl.innerHTML = `
+            <div class="dash-empty">
+                <span class="de-illu"><i class="fa-solid fa-hourglass-half"></i></span>
+                <span class="de-title">Takvimli proje yok</span>
+                <span class="de-sub">Aşaması <b>Proje</b> olan işlerde başlangıç ve teslim tarihi girildiğinde kalan süre burada halka olarak izlenir.</span>
+                <button class="de-cta is-ghost" onclick="navigateTo('projects')"><i class="fa-solid fa-list-check"></i> İşlere git</button>
+            </div>`;
         return;
     }
 
@@ -11576,6 +12391,7 @@ function renderDashDeadlinePanel() {
         return `
         <div class="${cls}" style="--tone:${tone.cssVar}; --pct:${pctText}%;" onclick="openJobModal('${job.id}')" title="${escapeJsAttr(title)}">
             <div class="dl-head">
+                ${deadlineRingHtml(progress.pct)}
                 <span class="dl-name">${escapeHtml(job.is_tanimi)}</span>
                 <span class="dl-badge"><i class="fa-solid ${stateIcon}"></i>${escapeHtml(remaining)}</span>
             </div>
@@ -11588,12 +12404,40 @@ function renderDashDeadlinePanel() {
     }).join('');
 }
 
+/* Halka geri sayım: ilerleme yüzdesini 30px'lik SVG halkada gösterir.
+   Çevresi 2πr ile sabittir; stroke-dashoffset oranla kısalır. Sayı halkanın
+   ORTASINDA durur, böylece satır yüksekliği artmadan oran okunur. */
+const DL_RING_R = 13;
+const DL_RING_C = 2 * Math.PI * DL_RING_R;
+
+function deadlineRingHtml(pct) {
+    const clamped = Math.max(0, Math.min(100, pct));
+    const offset = DL_RING_C * (1 - clamped / 100);
+    return `
+        <span class="dl-ring-wrap" aria-hidden="true">
+            <svg class="dl-ring" viewBox="0 0 30 30">
+                <circle class="ring-track" cx="15" cy="15" r="${DL_RING_R}"></circle>
+                <circle class="ring-prog" cx="15" cy="15" r="${DL_RING_R}" style="stroke-dasharray:${DL_RING_C.toFixed(2)}; stroke-dashoffset:${offset.toFixed(2)};"></circle>
+            </svg>
+            <span class="dl-ring-txt">${Math.round(clamped)}</span>
+        </span>`;
+}
+
 /* --- BUGÜNKÜ İŞLER PANELİ: panel-yerel arama + hızlı görev ekleme --- */
 let dashTodayQuery = '';
 function handleDashTodaySearch(q) {
     dashTodayQuery = String(q || '').toLocaleLowerCase('tr-TR').trim();
     renderDashTodayPanel();
 }
+/* Boş durumdaki "Görev ekle" CTA'sı: yeni görev alanına odaklanır ve
+   kullanıcıyı panel içinde tutar (boş panelde tıklanacak ölü buton olmasın). */
+function focusDashTodoInput() {
+    const el = document.getElementById('dash-todo-input-text');
+    if (!el) return;
+    el.focus();
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
 function renderDashTodayPanel() {
     const rowsEl = document.getElementById('dash-today-rows');
     const dateInput = document.getElementById('dash-todo-input-date');
@@ -11615,7 +12459,19 @@ function renderDashTodayPanel() {
     if (dashTodayQuery) list = list.filter(t => (t.text || '').toLocaleLowerCase('tr-TR').includes(dashTodayQuery));
 
     if (list.length === 0) {
-        rowsEl.innerHTML = `<div class="dash-empty"><i class="fa-solid fa-mug-hot"></i><span>${dashTodayQuery ? 'Aramanızla eşleşen görev yok.' : 'Bugün için görev yok. Üstteki alandan ekleyin.'}</span></div>`;
+        rowsEl.innerHTML = dashTodayQuery
+            ? `<div class="dash-empty">
+                   <span class="de-illu"><i class="fa-solid fa-magnifying-glass"></i></span>
+                   <span class="de-title">Eşleşen görev yok</span>
+                   <span class="de-sub">"${escapeHtml(dashTodayQuery)}" için bugünkü listelerde sonuç bulunamadı.</span>
+                   <button class="de-cta is-ghost" onclick="handleDashTodaySearch('')"><i class="fa-solid fa-eraser"></i> Aramayı temizle</button>
+               </div>`
+            : `<div class="dash-empty">
+                   <span class="de-illu"><i class="fa-solid fa-mug-hot"></i></span>
+                   <span class="de-title">Bugün için görev yok</span>
+                   <span class="de-sub">Üstteki alandan ekleyin; ⭐ işaretli görevler ertesi güne otomatik taşınır.</span>
+                   <button class="de-cta" onclick="focusDashTodoInput()"><i class="fa-solid fa-plus"></i> Görev ekle</button>
+               </div>`;
         return;
     }
 
@@ -11689,7 +12545,17 @@ function toggleProfilePopover(event) {
         if (jobsEl) jobsEl.textContent = String(jobs.length);
         if (activeEl) activeEl.textContent = String(activeJobIds.length);
         const themeEl = document.getElementById('profile-stat-theme');
-        if (themeEl) themeEl.textContent = (document.documentElement.getAttribute('data-theme') === 'light') ? 'Gündüz' : 'Gece';
+        if (themeEl) {
+            /* 4 tema var; profil satırı aktif temanın ADINI gösterir.
+               Bilinmeyen değerde 'Gece'ye düşer (savunmacı). */
+            const t = document.documentElement.getAttribute('data-theme');
+            themeEl.textContent = ({
+                'dark': 'Deep Void',
+                'light': 'Soft Slate',
+                'executive': 'Executive',
+                'midnight-blue': 'Midnight Blue'
+            })[t] || 'Gece';
+        }
     }
     if (event) event.stopPropagation();
 }
@@ -11735,10 +12601,6 @@ let workModeBridgeInstalled = false;
 
 function isWorkModePrivate() {
     return workMode === 'private';
-}
-
-function isWorkModePublic() {
-    return workMode === 'public';
 }
 
 /* Public modda toplu bulut yazımını global emniyet kilidiyle de engeller:
@@ -11866,15 +12728,25 @@ function initKineticWelcomeTitle() {
        verilir. Başlık boyunca kesintisiz bir renk geçişi görünmesi için her
        harfin rengi, harfin satırdaki sırasına göre enterpole edilir. */
     const totalChars = WM_WELCOME_TEXT.replace(/\s/g, '').length;
-    /* Tema duyarlı palet — GÜMÜŞTEN TURKUAZA akan shimmer:
-       koyu zeminde gümüş (açık) → turkuaz; açık zeminde slate → koyu cyan.
+    /* Tema duyarlı palet — her tema kendi vurgu ekseninde akar:
+         dark          : gümüş → turkuaz (orijinal Deep Void kimliği)
+         light         : slate → koyu cyan
+         executive     : gümüştaş → pirinç
+         midnight-blue : buz mavisi → şampanya
        Her harfin üstüne ayrıca beyazımsı bir "highlight" bandı biner
        (--wm-ch-hi); CSS'te soldan sağa kayarak Magic UI parlamasını üretir. */
-    const acikTema = document.documentElement.getAttribute('data-theme') === 'light';
-    const paletUst = acikTema ? [0x64, 0x74, 0x8b] : [0xe8, 0xee, 0xf7];  /* gümüş   */
-    const paletOrta = acikTema ? [0x47, 0x55, 0x69] : [0xc7, 0xd2, 0xe0]; /* çelik   */
-    const paletAlt = acikTema ? [0x0e, 0x74, 0x90] : [0x67, 0xe8, 0xf9];  /* turkuaz */
-    const paletKoyu = acikTema ? [0x1e, 0x29, 0x3b] : [0x22, 0xd3, 0xee]; /* dip ton */
+    const tema = document.documentElement.getAttribute('data-theme') || 'dark';
+    const PALETLER = {
+        'light':         { ust: [0x64, 0x74, 0x8b], orta: [0x47, 0x55, 0x69], alt: [0x0e, 0x74, 0x90], koyu: [0x1e, 0x29, 0x3b] },
+        'executive':     { ust: [0xee, 0xe6, 0xd6], orta: [0xc9, 0xbe, 0xa6], alt: [0xc8, 0xa2, 0x4a], koyu: [0x8f, 0x6f, 0x26] },
+        'midnight-blue': { ust: [0xe4, 0xec, 0xf8], orta: [0xb4, 0xc6, 0xe0], alt: [0xd4, 0xaf, 0x37], koyu: [0x9a, 0x7b, 0x2e] },
+        'dark':          { ust: [0xe8, 0xee, 0xf7], orta: [0xc7, 0xd2, 0xe0], alt: [0x67, 0xe8, 0xf9], koyu: [0x22, 0xd3, 0xee] }
+    };
+    const secili = PALETLER[tema] || PALETLER['dark'];
+    const paletUst = secili.ust;
+    const paletOrta = secili.orta;
+    const paletAlt = secili.alt;
+    const paletKoyu = secili.koyu;
     const karistir = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
     const rgb = (c) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
     const parlak = (c) => `rgb(${Math.min(255, c[0] + 46)}, ${Math.min(255, c[1] + 46)}, ${Math.min(255, c[2] + 46)})`;
@@ -12154,25 +13026,6 @@ function buildTotpSetupUri(base32Secret, label, issuer) {
         + '?secret=' + encodeURIComponent(String(base32Secret).replace(/[\s-]/g, '').toUpperCase())
         + '&issuer=' + encodeURIComponent(issuer || 'ProjeTakip')
         + '&algorithm=SHA1&digits=6&period=30';
-}
-
-/* Yönetici yardımcısı: sunucudan otpauth URI'sini çeker ve konsola yazar.
-   Ayarlar'daki bir butona bağlanabilir; TOTP_SECRET sunucuda tanımlı olmalı. */
-function fetchTotpSetupUri() {
-    const headers = { 'Content-Type': 'application/json' };
-    if (typeof workModeSessionToken !== 'undefined' && workModeSessionToken) headers['X-Session-Token'] = workModeSessionToken;
-    else if (typeof workModeMasterPassword !== 'undefined' && workModeMasterPassword) headers['X-Master-Password'] = workModeMasterPassword;
-    return fetch(CLOUD_API_ENDPOINT + '?setup=totp', { headers: headers, cache: 'no-store' })
-        .then(r => r.json())
-        .then(payload => {
-            if (payload && payload.ok && payload.otpauthUri) {
-                if (typeof console !== 'undefined' && console.info) {
-                    console.info('[totp] Google Authenticator eşleştirme URI\'si:\n' + payload.otpauthUri);
-                }
-                return payload.otpauthUri;
-            }
-            throw new Error((payload && payload.error) || 'URI alınamadı');
-        });
 }
 
 /* Enter tuşu parola alanında Devam Et'i tetikler. */

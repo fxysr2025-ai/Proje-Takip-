@@ -103,6 +103,11 @@
         <div class="splash-meta bottom">PROJE YÖNETİM PANELİ</div>
     </div>
 
+    <!-- TOPOGRAFİK IZGARA (madde 7): SVG tek renkli doku, opacity .09.
+         CSS 99.9: fixed + inset 0 + z-index 0 + pointer-events:none.
+         BODY içinde orblardan ÖNCE yazıldığı için orbların altında kalır. -->
+    <div class="topo-layer" aria-hidden="true"></div>
+
     <!-- AMBIENT LIGHT ORBS -->
     <div class="ambient-orb orb-1"></div>
     <div class="ambient-orb orb-2"></div>
@@ -323,7 +328,7 @@
         <ul class="sidebar-menu">
             <div class="menu-indicator" id="menu-indicator" aria-hidden="true"></div>
             <div class="menu-label">GENEL</div>
-            <li><a class="menu-item active" id="nav-home" onclick="navigateTo('home')"><i class="fa-solid fa-chart-pie"></i><span>Dashboard</span></a></li>
+            <li><a class="menu-item active" id="nav-home" onclick="navigateTo('home')"><i class="fa-solid fa-chart-pie"></i><span>Genel Bakış</span></a></li>
             
             <div class="menu-label">İŞLER</div>
             <li>
@@ -487,24 +492,17 @@
                         </div>
 
                         <div class="map-controls">
-                            <button class="map-btn map-btn-labeled" id="zone-toggle-btn" onclick="toggleHeatZones()" title="Isı Bölgeleri Göster / Gizle"><span class="map-btn-label">Isı Haritası</span><i class="fa-solid fa-temperature-three-quarters"></i></button>
                             <button class="map-btn" onclick="zoomMap(1.3)" title="Yakınlaş"><i class="fa-solid fa-plus"></i></button>
                             <button class="map-btn" onclick="zoomMap(0.7)" title="Uzaklaş"><i class="fa-solid fa-minus"></i></button>
                             <button class="map-btn" onclick="resetMapZoom()" title="Ortala & Fitle"><i class="fa-solid fa-expand"></i></button>
-                            <span class="map-satellite-btn-wrap">
-                                <button class="map-btn" id="satellite-toggle-btn" onclick="toggleSatelliteMode()" title="Uydu Görünümü"><i class="fa-solid fa-earth-americas"></i></button>
-                                <span class="map-satellite-tip">Uydu Görünümü</span>
-                            </span>
                         </div>
-                        <div class="map-legend">
-                            <div class="legend-projects" id="legend-projects">
-                                <span>Proje Sayısı:</span>
-                                <div class="legend-gradient-bar"></div>
-                                <span>0 ile 10+</span>
-                            </div>
-                            <div class="legend-zones" id="legend-zones" style="display:none;"></div>
-                        </div>
+                        <button class="map-btn map-btn-labeled map-corner-btn" id="zone-toggle-btn" onclick="toggleHeatZones()" title="Isı Bölgeleri Göster / Gizle"><span class="map-btn-label">Isı Haritası</span><i class="fa-solid fa-temperature-three-quarters"></i></button>
 
+                        <!-- UYDU: lejant kaldırılınca o yerleşime taşındı. -->
+                        <span class="map-satellite-btn-wrap map-corner-btn map-corner-satellite">
+                            <button class="map-btn" id="satellite-toggle-btn" onclick="toggleSatelliteMode()" title="Uydu Görünümü"><i class="fa-solid fa-earth-americas"></i></button>
+                            <span class="map-satellite-tip map-corner-tip">Uydu Görünümü</span>
+                        </span>
                         <!-- HOLOGRAFİK TÜR GRAFİĞİ: bir il seçilince açılır. İçeriği
                              renderCityHoloChart() doldurur; boş hâlde gizli durur. -->
                         <div class="map-holo" id="map-holo" aria-live="polite"></div>
@@ -539,13 +537,13 @@
 
                 <!-- SOL ALT BANDI: iki panel (Deadline | Veri Tamamlama). Aralarındaki
                      ayırıcı #splitter-v-bottom-inner (splitX3) ile sürüklenebilir. -->
-                <div class="panel-splitter-v psw-v-bot-inner" id="splitter-v-bottom-inner" role="separator" aria-orientation="vertical" title="Sürükleyerek Deadline ve Veri Tamamlama panellerinin genişliğini ayarla"></div>
+                <div class="panel-splitter-v psw-v-bot-inner" id="splitter-v-bottom-inner" role="separator" aria-orientation="vertical" title="Sürükleyerek Teslim Tarihleri ve Veri Tamamlama panellerinin genişliğini ayarla"></div>
 
                 <!-- SOL ALT (İLK): DEADLINE PANELİ — Proje aşamasındaki işlerin
                      başlangıç→teslim süre dolumu. -->
                 <div class="dash-panel" id="dash-panel-deadline">
                     <div class="dash-panel-head">
-                        <div class="dash-panel-title"><i class="fa-solid fa-hourglass-half" style="color:var(--color-amber);"></i> Deadline</div>
+                        <div class="dash-panel-title"><i class="fa-solid fa-hourglass-half" style="color:var(--color-amber);"></i> Teslim Tarihleri</div>
                         <span class="mini-chip" id="dash-deadline-chip" style="border-color:rgba(245,158,11,0.35); background:rgba(245,158,11,0.12); color:var(--color-amber);">0 proje</span>
                     </div>
                     <div class="dash-panel-body">
@@ -1186,10 +1184,124 @@
                         <div class="settings-grid" id="settings-grid-container"></div>
                     </div>
 
-                    <!-- EKRAN KORUYUCU PANELİ -->
+                    <!-- DİNAMİK ARKA PLAN PANELİ -->
                     <div id="settings-tab-screensaver-content" style="display: none; flex-direction: column; gap: 12px; position: relative; z-index: 2;">
+                        <!-- CANLI ARKA PLAN MOTORU — panelin arkasında sürekli
+                             çalışan takımyıldız ağının tüm parametreleri.
+                             Katmanlar DOM'dan SİLİNMEZ; anahtarlar body'ye
+                             yazılan fx-* sınıflarıyla gizlenir. -->
                         <div>
-                            <h4 style="font-size: 13.2px; color: var(--color-primary); margin-bottom: 6px;"><i class="fa-solid fa-circle-nodes"></i> Dinamik Arka Plan — Takımyıldız Ağı</h4>
+                            <h4 style="font-size: 13.2px; color: var(--color-primary); margin-bottom: 6px; display:flex; align-items:center; gap:8px;">
+                                <i class="fa-solid fa-satellite-dish"></i> Canlı Arka Plan Motoru
+                                <span id="bg-live-state" style="font-size:10.4px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; color: var(--color-emerald);">Çalışıyor</span>
+                            </h4>
+                            <p style="font-size: 11.8px; color: var(--txt-muted); margin: 0 0 10px 0; line-height: 1.5;">
+                                Panelin arkasındaki etkileşimli takımyıldız ağı. Düğümler fare yaklaşınca tepki verir,
+                                tıklamalar enerji dalgası bırakır. Aşağıdaki değerler anında uygulanır ve tarayıcıda saklanır.
+                            </p>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; max-width: 760px;">
+                                <div class="form-group">
+                                    <label>Parçacık Yoğunluğu</label>
+                                    <select class="form-control" id="bg-density-select" onchange="setBgConfig('density', this.value)">
+                                        <option value="0.4">Seyrek (0.4×)</option>
+                                        <option value="0.7">Az (0.7×)</option>
+                                        <option value="1" selected>Normal (1×)</option>
+                                        <option value="1.5">Yoğun (1.5×)</option>
+                                        <option value="2.2">Çok Yoğun (2.2×)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Bağlantı Mesafesi</label>
+                                    <select class="form-control" id="bg-link-select" onchange="setBgConfig('link', this.value)">
+                                        <option value="70">Kısa (70px)</option>
+                                        <option value="110" selected>Orta (110px)</option>
+                                        <option value="150">Geniş (150px)</option>
+                                        <option value="200">Çok Geniş (200px)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Hareket Hızı</label>
+                                    <select class="form-control" id="bg-speed-select" onchange="setBgConfig('speed', this.value)">
+                                        <option value="0.4">Çok Yavaş</option>
+                                        <option value="0.7">Yavaş</option>
+                                        <option value="1" selected>Normal</option>
+                                        <option value="1.6">Hızlı</option>
+                                        <option value="2.2">Çok Hızlı</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Fare Etkileşimi</label>
+                                    <select class="form-control" id="bg-interaction-select" onchange="setBgConfig('interaction', this.value)">
+                                        <option value="repel" selected>İmleçten Kaç</option>
+                                        <option value="attract">İmlece Çekil</option>
+                                        <option value="off">Kapalı</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- KATMAN ANAHTARLARI — her biri bir görsel katmanı
+                             açar/kapatır; hiçbir katman DOM'dan kaldırılmaz. -->
+                        <div style="display:flex; flex-direction:column; gap:8px; max-width:760px;">
+                            <div class="pref-row">
+                                <div class="pref-icon"><i class="fa-solid fa-circle-nodes"></i></div>
+                                <div class="pref-text">
+                                    <span class="pref-title">Takımyıldız Ağı</span>
+                                    <span class="pref-sub">Ana motor. Kapatıldığında animasyon tamamen durur ve işlemci yükü sıfıra iner.</span>
+                                </div>
+                                <button class="pref-switch" id="bg-enabled-switch" onclick="toggleBgFlag('enabled')" role="switch" aria-checked="true" aria-label="Takımyıldız Ağı"></button>
+                            </div>
+                            <div class="pref-row">
+                                <div class="pref-icon"><i class="fa-solid fa-hand-pointer"></i></div>
+                                <div class="pref-text">
+                                    <span class="pref-title">Tıklama Dalgası</span>
+                                    <span class="pref-sub">Sayfaya her tıklamada imleçten genişleyen bir enerji halkası yayılır.</span>
+                                </div>
+                                <button class="pref-switch" id="bg-ripple-switch" onclick="toggleBgFlag('ripple')" role="switch" aria-checked="true" aria-label="Tıklama Dalgası"></button>
+                            </div>
+                            <div class="pref-row">
+                                <div class="pref-icon"><i class="fa-solid fa-border-all"></i></div>
+                                <div class="pref-text">
+                                    <span class="pref-title">Topografik Izgara</span>
+                                    <span class="pref-sub">Arka plandaki ince eş yükselti çizgileri.</span>
+                                </div>
+                                <button class="pref-switch" id="bg-topo-switch" onclick="toggleBgFlag('topo')" role="switch" aria-checked="true" aria-label="Topografik Izgara"></button>
+                            </div>
+                            <div class="pref-row">
+                                <div class="pref-icon"><i class="fa-solid fa-sun"></i></div>
+                                <div class="pref-text">
+                                    <span class="pref-title">Işık Küreleri</span>
+                                    <span class="pref-sub">Köşelerde yavaşça nefes alan renkli atmosfer küreleri.</span>
+                                </div>
+                                <button class="pref-switch" id="bg-orbs-switch" onclick="toggleBgFlag('orbs')" role="switch" aria-checked="true" aria-label="Işık Küreleri"></button>
+                            </div>
+                            <div class="pref-row">
+                                <div class="pref-icon"><i class="fa-solid fa-braille"></i></div>
+                                <div class="pref-text">
+                                    <span class="pref-title">Dijital Gren</span>
+                                    <span class="pref-sub">Yüzeye sinema filmi dokusu veren çok hafif kumlanma.</span>
+                                </div>
+                                <button class="pref-switch" id="bg-grain-switch" onclick="toggleBgFlag('grain')" role="switch" aria-checked="true" aria-label="Dijital Gren"></button>
+                            </div>
+                            <div class="pref-row">
+                                <div class="pref-icon"><i class="fa-solid fa-lightbulb"></i></div>
+                                <div class="pref-text">
+                                    <span class="pref-title">İmleç Işığı</span>
+                                    <span class="pref-sub">Fareyi takip eden yumuşak mavi spot ışığı.</span>
+                                </div>
+                                <button class="pref-switch" id="bg-glow-switch" onclick="toggleBgFlag('glow')" role="switch" aria-checked="true" aria-label="İmleç Işığı"></button>
+                            </div>
+                        </div>
+
+                        <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+                            <button class="btn btn-secondary" onclick="resetBgConfig()"><i class="fa-solid fa-rotate-left"></i> Arka Planı Varsayılana Dön</button>
+                            <span style="font-size:11.5px; color:var(--txt-muted);">Değişiklikler anında uygulanır.</span>
+                        </div>
+
+                        <div style="height:1px; background:var(--surface-border); margin:4px 0; max-width:760px;"></div>
+
+                        <div>
+                            <h4 style="font-size: 13.2px; color: var(--color-primary); margin-bottom: 6px;"><i class="fa-solid fa-circle-nodes"></i> Ekran Koruyucu</h4>
                             <p style="font-size: 11.8px; color: var(--txt-muted); margin: 0 0 10px 0; line-height: 1.5;">
                                 Sistem belirtilen süre boyunca hiç kullanılmazsa, koyu gökyüzü üzerinde ışık noktalarından oluşan canlı bir takımyıldız ağı belirir.
                                 Nokta sayısı, bağlantı mesafesi ve hareket hızını buradan ayarlayabilirsin.
@@ -1523,7 +1635,7 @@
                             </div>
                         </div>
                         <div id="form-deadline-hint" style="font-size:9.6px; color:var(--txt-muted); font-weight:600; line-height:1.35; margin-top:3px;">
-                            <i class="fa-solid fa-circle-info"></i> Bu tarihler yalnız <b>Proje</b> aşamasında tutulur ve Dashboard'daki <b>Deadline</b> panelinde süre dolumu olarak gösterilir.
+                            <i class="fa-solid fa-circle-info"></i> Bu tarihler yalnız <b>Proje</b> aşamasında tutulur ve Genel Bakış'taki <b>Teslim Tarihleri</b> panelinde süre dolumu olarak gösterilir.
                         </div>
                     </div>
 
@@ -1932,6 +2044,7 @@
                 </div>
                 <div class="wm-gate-name">PUBLIC</div>
                 <div class="wm-gate-sub">Yerel Çalışma Alanı</div>
+                <span class="wm-gate-go" aria-hidden="true"><i class="fa-solid fa-arrow-right"></i></span>
             </div>
 
             <!-- PRIVATE: bulut + kilit ikonu, cyan aura; tıklanınca genişler. -->
@@ -1949,6 +2062,7 @@
                 </div>
                 <div class="wm-gate-name">PRIVATE</div>
                 <div class="wm-gate-sub">Bulut Senkronizasyonu</div>
+                <span class="wm-gate-go" aria-hidden="true"><i class="fa-solid fa-arrow-right"></i></span>
 
                 <!-- AÇILIR ALAN: 0fr → 1fr ile yumuşak yükseklik geçişi.
                      stopPropagation: içerideki tıklamalar kartın onclick'ine
@@ -1974,6 +2088,11 @@
                 </div>
             </div>
         </div>
+
+        <footer class="wm-gate-foot">
+            <span class="wm-gate-foot-note"><i class="fa-solid fa-shield-halved"></i> Veriler yalnız bu cihazda tutulur; yerel modda hiçbir kayıt dışarı çıkmaz.</span>
+            <span class="wm-gate-foot-ver">ETÜT Proje Yönetim Sistemi · v1.0</span>
+        </footer>
     </div>
 </div>
 
@@ -2001,19 +2120,19 @@
         align-items: center;
         gap: 0;
         padding: 40px 22px;
+        /* TEMAYA BAĞLI ZEMİN: her temanın --app-bg ve --fam-accent değerleri
+           kullanılır; tema değiştikçe giriş ekranı da birlikte değişir. */
         background:
-            radial-gradient(1100px 620px at 50% -10%, rgba(56, 189, 248, 0.10), transparent 62%),
-            radial-gradient(900px 520px at 15% 108%, rgba(99, 102, 241, 0.10), transparent 60%),
-            rgba(7, 11, 20, 0.90);
+            radial-gradient(1100px 620px at 50% -10%, rgba(var(--fam-accent, 56, 189, 248), 0.10), transparent 62%),
+            radial-gradient(900px 520px at 15% 108%, rgba(var(--fam-accent-deep, 99, 102, 241), 0.10), transparent 60%),
+            color-mix(in srgb, var(--app-bg, #070b14) 92%, transparent);
         backdrop-filter: blur(22px) saturate(130%);
         -webkit-backdrop-filter: blur(22px) saturate(130%);
+        transition: background 0.42s ease;
     }
-    [data-theme="light"] #work-mode-modal.wm-mode-overlay {
-        background:
-            radial-gradient(1100px 620px at 50% -10%, rgba(14, 165, 233, 0.14), transparent 62%),
-            radial-gradient(900px 520px at 12% 108%, rgba(99, 102, 241, 0.12), transparent 60%),
-            rgba(241, 245, 249, 0.94);
-    }
+    /* Açık temada zemin otomatik değiştiği için bu kurala gerek kalmadı;
+       koyu tonlu gradient fallback'leri yalnız jeton eksikse devreye girer.
+       (Eski sabit açık zemin kuralı silindi — tema jetonlarına taşındı.) */
 
     /* GEÇİŞ KAPISI GÖVDESİ: kart değil — boşlukta duran bir sahne. */
     .wm-gate {
@@ -2026,7 +2145,8 @@
         gap: clamp(30px, 4.2vw, 52px);
     }
 
-    /* AMBIENT IŞIK: iki yumuşak küre, çok yavaş nefes alır. */
+    /* AMBIENT IŞIK: iki yumuşak küre, çok yavaş nefes alır.
+       Renkler tema jetonlarından gelir; tema değişince ışık da değişir. */
     .wm-gate-aurora {
         position: absolute;
         inset: -18% -12% auto -12%;
@@ -2034,15 +2154,11 @@
         pointer-events: none;
         z-index: 0;
         background:
-            radial-gradient(closest-side, rgba(148, 163, 184, 0.20), transparent 72%) 22% 34% / 42% 78% no-repeat,
-            radial-gradient(closest-side, rgba(34, 211, 238, 0.20), transparent 72%) 78% 62% / 46% 84% no-repeat;
+            radial-gradient(closest-side, rgba(var(--fam-edge, 148, 163, 184), 0.20), transparent 72%) 22% 34% / 42% 78% no-repeat,
+            radial-gradient(closest-side, rgba(var(--fam-accent, 34, 211, 238), 0.20), transparent 72%) 78% 62% / 46% 84% no-repeat;
         filter: blur(52px);
         animation: wmAuroraBreathe 13s ease-in-out infinite;
-    }
-    [data-theme="light"] .wm-gate-aurora {
-        background:
-            radial-gradient(closest-side, rgba(100, 116, 139, 0.20), transparent 72%) 22% 34% / 42% 78% no-repeat,
-            radial-gradient(closest-side, rgba(8, 145, 178, 0.22), transparent 72%) 78% 62% / 46% 84% no-repeat;
+        transition: background 0.42s ease;
     }
     @keyframes wmAuroraBreathe {
         0%, 100% { opacity: 0.62; transform: scale(1) translateY(0); }
@@ -2071,8 +2187,8 @@
     }
     .wm-welcome-eyebrow::before {
         content: ''; width: 5px; height: 5px; border-radius: 50%;
-        background: var(--color-cyan, #22d3ee);
-        box-shadow: 0 0 9px 2px rgba(6, 182, 212, 0.65);
+        background: var(--color-primary, #22d3ee);
+        box-shadow: 0 0 9px 2px rgba(var(--fam-accent, 6, 182, 212), 0.65);
         animation: wmEyebrowPulse 2.6s ease-in-out infinite;
     }
     /* ZARIF TIPOGRAFI: bold degil — ince (300), genis harf araligi. */
@@ -2080,36 +2196,33 @@
         position: relative;
         font-family: var(--font-family-heading);
         font-size: clamp(22px, 3.7vw, 42px);
-        font-weight: 300;
+        /* 300 → 450: yazı yaklaşık %50 kalınlaştırıldı. 500 değil 450
+           seçildi; ince zarif duruş korunurken ağırlık artıyor. */
+        font-weight: 450;
         letter-spacing: 0.155em;
         line-height: 1.24;
         text-transform: uppercase;
         margin: 0;
-        filter: drop-shadow(0 0 26px rgba(56, 189, 248, 0.22));
+        filter: drop-shadow(0 0 26px rgba(var(--fam-accent, 56, 189, 248), 0.22));
     }
     /* ALT CIZGI KALDIRILDI: sert beyaz cizgi yerine, kenarlari tamamen
        eriyen yumusak bir isik huzmesi. */
+    /* TEMAYA BAĞLI: aynı jetonlar açık temada da geçerli olduğu için eski
+       sabit açık-ton kuralı kaldırıldı. */
     .wm-welcome-title::after {
         content: '';
         position: absolute; left: 12%; right: 12%; bottom: -16px;
         height: 1px;
         background: linear-gradient(90deg,
             transparent 0%,
-            rgba(226, 232, 240, 0.55) 32%,
-            rgba(103, 232, 249, 0.75) 55%,
-            rgba(226, 232, 240, 0.45) 74%,
+            rgba(var(--fam-edge, 226, 232, 240), 0.55) 32%,
+            rgba(var(--fam-accent, 103, 232, 249), 0.75) 55%,
+            rgba(var(--fam-edge, 226, 232, 240), 0.45) 74%,
             transparent 100%);
         opacity: 0.55;
         filter: blur(0.4px);
         animation: wmHaloGlow 5.5s ease-in-out infinite;
-    }
-    [data-theme="light"] .wm-welcome-title::after {
-        background: linear-gradient(90deg,
-            transparent 0%,
-            rgba(51, 65, 85, 0.45) 32%,
-            rgba(14, 116, 144, 0.65) 55%,
-            rgba(51, 65, 85, 0.35) 74%,
-            transparent 100%);
+        transition: background 0.42s ease;
     }
     @keyframes wmHaloGlow {
         0%, 100% { opacity: 0.35; }
@@ -2119,48 +2232,37 @@
     .wm-welcome-title .wm-kin-ch {
         display: inline-block;
         will-change: transform;
-        /* GUMUS -> TURKUAZ: renkler JS tarafindan harf sirasina gore
-           enterpole edilir (--wm-ch-top / --wm-ch-hi / --wm-ch-bot).
-           Uzerine binen acik bant harfin icinde soldan saga akar:
-           "Magic UI" shimmer efekti. */
+        /* RENK: harf başına STATİK gradyan. Renkler JS tarafında aktif temanın
+           paletinden hesaplanır (--wm-ch-top/hi/bot) ve tema değişince
+           yeniden yazılır. Kayan tarama animasyonu (shimmer) İPTAL edildi:
+           eski `wmShimmerSweep` ve `background-size: 280%` kaldırıldı.
+           Hover büyümesi (.wm-kin-up) korunur. */
         background-image: linear-gradient(100deg,
             var(--wm-ch-top, #e2e8f0) 0%,
             var(--wm-ch-top, #e2e8f0) 26%,
             var(--wm-ch-hi, rgba(255, 255, 255, 0.92)) 48%,
             var(--wm-ch-bot, #67e8f9) 62%,
             var(--wm-ch-bot, #67e8f9) 100%);
-        background-size: 280% 100%;
         -webkit-background-clip: text;
         background-clip: text;
         -webkit-text-fill-color: transparent;
         color: transparent;
         transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.3s ease;
-        animation: wmCharIn 0.62s cubic-bezier(0.22, 1, 0.36, 1) backwards,
-                   wmShimmerSweep 7s linear infinite;
+        animation: wmCharIn 0.62s cubic-bezier(0.22, 1, 0.36, 1) backwards;
     }
     @keyframes wmCharIn {
         from { opacity: 0; transform: translateY(14px) scale(0.94); filter: blur(5px); }
         to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
     }
-    @keyframes wmShimmerSweep {
-        0%   { background-position: 140% 50%; }
-        100% { background-position: -40% 50%; }
-    }
-    /* HOVER DALGASI: harf yukselirken turkuaz bir hale kazanir. */
+    /* HOVER DALGASI: harf yukselirken tema vurgusuyla bir hale kazanir. */
     .wm-welcome-title .wm-kin-ch.wm-kin-up {
         transform: translateY(-6px) scale(1.06);
-        filter: drop-shadow(0 0 14px rgba(103, 232, 249, 0.75));
-    }
-    [data-theme="light"] .wm-welcome-title {
-        filter: drop-shadow(0 0 18px rgba(8, 145, 178, 0.18));
-    }
-    [data-theme="light"] .wm-welcome-title .wm-kin-ch.wm-kin-up {
-        filter: drop-shadow(0 0 12px rgba(14, 116, 144, 0.45));
+        filter: drop-shadow(0 0 14px rgba(var(--fam-accent, 103, 232, 249), 0.75));
     }
     @keyframes wmEyebrowIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
     @keyframes wmEyebrowPulse {
-        0%, 100% { opacity: 1; box-shadow: 0 0 9px 2px rgba(6, 182, 212, 0.7); }
-        50%      { opacity: 0.5; box-shadow: 0 0 4px 1px rgba(6, 182, 212, 0.4); }
+        0%, 100% { opacity: 1; box-shadow: 0 0 9px 2px rgba(var(--fam-accent, 6, 182, 212), 0.7); }
+        50%      { opacity: 0.5; box-shadow: 0 0 4px 1px rgba(var(--fam-accent, 6, 182, 212), 0.4); }
     }
 
     /* --- GLASSMORPHISM MOD KARTLARI ------------------------------------ */
@@ -2182,9 +2284,12 @@
         gap: 10px;
         padding: 30px 22px 28px;
         border-radius: 22px;
-        background:
-            linear-gradient(168deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.018) 58%, rgba(255, 255, 255, 0.045) 100%);
-        border: 1px solid rgba(255, 255, 255, 0.11);
+        /* TEMAYA BAĞLI CAM YÜZEY: zemin/kontur tema jetonlarından gelir. */
+        background: linear-gradient(168deg,
+            color-mix(in srgb, var(--surface-1, #0f172a) 78%, transparent) 0%,
+            color-mix(in srgb, var(--surface-1, #0f172a) 46%, transparent) 58%,
+            color-mix(in srgb, var(--surface-2, #1e293b) 62%, transparent) 100%);
+        border: 1px solid var(--surface-border-strong, rgba(255, 255, 255, 0.11));
         backdrop-filter: blur(20px) saturate(160%);
         -webkit-backdrop-filter: blur(20px) saturate(160%);
         box-shadow:
@@ -2203,56 +2308,56 @@
         inset: 0 0 auto 0;
         height: 42%;
         border-radius: 22px 22px 0 0;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), transparent);
+        background: linear-gradient(180deg, rgba(var(--fam-edge, 255, 255, 255), 0.10), transparent);
         pointer-events: none;
     }
     .wm-gate-card:focus-visible {
-        border-color: rgba(148, 163, 184, 0.65);
-        box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.22);
+        border-color: rgba(var(--fam-accent, 148, 163, 184), 0.65);
+        box-shadow: 0 0 0 3px rgba(var(--fam-accent, 148, 163, 184), 0.22);
     }
     /* PUBLIC: gumus parlama. */
     .wm-gate-card--public:hover {
         transform: translateY(-6px) scale(1.028);
-        border-color: rgba(226, 232, 240, 0.42);
+        border-color: rgba(var(--fam-edge, 226, 232, 240), 0.45);
         box-shadow:
-            0 30px 60px -30px rgba(0, 0, 0, 0.9),
-            0 0 42px -10px rgba(226, 232, 240, 0.35),
-            inset 0 1px 0 rgba(255, 255, 255, 0.16);
+            0 30px 60px -30px rgba(0, 0, 0, 0.55),
+            0 0 42px -10px rgba(var(--fam-edge, 226, 232, 240), 0.38),
+            inset 0 1px 0 rgba(var(--fam-edge, 255, 255, 255), 0.18);
     }
     .wm-gate-card--public:hover .wm-gate-icon {
-        color: #f1f5f9;
-        filter: drop-shadow(0 0 12px rgba(226, 232, 240, 0.75));
+        color: var(--txt-white, #f1f5f9);
+        filter: drop-shadow(0 0 12px rgba(var(--fam-edge, 226, 232, 240), 0.75));
     }
     /* PRIVATE: cyan (turkuaz) aura. */
     .wm-gate-card--private:hover {
         transform: translateY(-6px) scale(1.028);
-        border-color: rgba(103, 232, 249, 0.46);
+        border-color: rgba(var(--fam-accent, 103, 232, 249), 0.48);
         box-shadow:
-            0 30px 60px -30px rgba(0, 0, 0, 0.9),
-            0 0 54px -8px rgba(34, 211, 238, 0.48),
-            inset 0 1px 0 rgba(255, 255, 255, 0.14);
+            0 30px 60px -30px rgba(0, 0, 0, 0.55),
+            0 0 54px -8px rgba(var(--fam-accent, 34, 211, 238), 0.50),
+            inset 0 1px 0 rgba(var(--fam-edge, 255, 255, 255), 0.16);
     }
     .wm-gate-card--private:hover .wm-gate-icon {
-        color: #a5f3fc;
-        filter: drop-shadow(0 0 12px rgba(34, 211, 238, 0.85));
+        color: var(--color-primary-hover, #a5f3fc);
+        filter: drop-shadow(0 0 12px rgba(var(--fam-accent, 34, 211, 238), 0.85));
     }
     /* PRIVATE acik hal: aura kalici; genislerken hover ziplamasi yok. */
     .wm-gate-card--private.wm-open {
-        border-color: rgba(103, 232, 249, 0.40);
+        border-color: rgba(var(--fam-accent, 103, 232, 249), 0.42);
         box-shadow:
-            0 30px 60px -30px rgba(0, 0, 0, 0.9),
-            0 0 60px -10px rgba(34, 211, 238, 0.42),
-            inset 0 1px 0 rgba(255, 255, 255, 0.14);
+            0 30px 60px -30px rgba(0, 0, 0, 0.55),
+            0 0 60px -10px rgba(var(--fam-accent, 34, 211, 238), 0.44),
+            inset 0 1px 0 rgba(var(--fam-edge, 255, 255, 255), 0.16);
         transform: none;
     }
     .wm-gate-icon {
         width: 44px; height: 44px;
         display: flex; align-items: center; justify-content: center;
-        color: rgba(203, 213, 225, 0.80);
+        color: var(--txt-sub, rgba(203, 213, 225, 0.80));
         transition: color 0.42s ease, filter 0.42s ease, transform 0.42s ease;
     }
     .wm-gate-icon svg { width: 34px; height: 34px; }
-    .wm-gate-card--private .wm-gate-icon { color: rgba(125, 211, 252, 0.78); }
+    .wm-gate-card--private .wm-gate-icon { color: var(--color-primary, rgba(125, 211, 252, 0.78)); }
     .wm-gate-card:hover .wm-gate-icon { transform: translateY(-1px); }
     .wm-gate-name {
         font-family: var(--font-family-heading);
@@ -2268,6 +2373,58 @@
         color: var(--txt-muted);
         opacity: 0.55;
         text-align: center;
+    }
+    /* TIKLANABİLİRLİK SİNYALİ: kartın köşesinde sağa kayan ok. Kartlar
+       role=button olsa da düz metin gibi duruyordu; imleç ve hover zaten
+       vardı, eksik olan yönlendirmeydi. */
+    .wm-gate-go {
+        position: absolute;
+        right: 14px; bottom: 14px;
+        width: 24px; height: 24px;
+        display: flex; align-items: center; justify-content: center;
+        border-radius: 50%;
+        font-size: 10px;
+        color: var(--txt-muted);
+        background: rgba(var(--fam-edge, 255, 255, 255), 0.07);
+        border: 1px solid rgba(var(--fam-edge, 255, 255, 255), 0.14);
+        opacity: 0.6;
+        transition: opacity 0.3s ease, transform 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+    }
+    .wm-gate-card:hover .wm-gate-go,
+    .wm-gate-card:focus-visible .wm-gate-go {
+        opacity: 1;
+        transform: translateX(3px);
+        color: var(--txt-white, #ffffff);
+        border-color: rgba(var(--fam-edge, 255, 255, 255), 0.45);
+    }
+    .wm-gate-card--private:hover .wm-gate-go {
+        color: var(--color-primary-hover, #a5f3fc);
+        border-color: rgba(var(--fam-accent, 103, 232, 249), 0.58);
+    }
+    /* ALT BİLGİ: giriş ekranının alt yarısı tamamen boştu. */
+    .wm-gate-foot {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 7px;
+        margin-top: clamp(18px, 3vw, 30px);
+        text-align: center;
+    }
+    .wm-gate-foot-note {
+        display: inline-flex; align-items: center; gap: 6px;
+        font-size: 10.6px; font-weight: 500;
+        color: var(--txt-muted);
+        opacity: 0.62;
+    }
+    .wm-gate-foot-ver {
+        font-family: var(--font-family-hacker);
+        font-size: 8.8px; font-weight: 700;
+        letter-spacing: 2.4px;
+        text-transform: uppercase;
+        color: var(--txt-muted);
+        opacity: 0.52;
     }
 
 
@@ -2312,7 +2469,7 @@
         flex-direction: column;
         gap: 8px;
         padding-top: 14px;
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        border-top: 1px solid var(--surface-border, rgba(255, 255, 255, 0.08));
         animation: wmPwFadeIn 0.42s ease 0.12s both;
     }
     @keyframes wmPwFadeIn {
@@ -2331,9 +2488,9 @@
         width: 100%;
         height: 40px;
         padding: 0 13px;
-        background: rgba(255, 255, 255, 0.055);
+        background: color-mix(in srgb, var(--surface-2, #1e293b) 72%, transparent);
         color: var(--txt-main);
-        border: 1px solid rgba(255, 255, 255, 0.12);
+        border: 1px solid var(--surface-border-strong, rgba(255, 255, 255, 0.12));
         border-radius: 11px;
         font-family: var(--font-family-base);
         font-size: var(--font-size-base);
@@ -2343,9 +2500,9 @@
     }
     .wm-pw-input::placeholder { color: var(--txt-muted); opacity: 0.55; letter-spacing: 0.02em; }
     .wm-pw-input:focus {
-        border-color: rgba(103, 232, 249, 0.62);
-        background: rgba(255, 255, 255, 0.085);
-        box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.16);
+        border-color: rgba(var(--fam-accent, 103, 232, 249), 0.62);
+        background: color-mix(in srgb, var(--surface-3, #334155) 72%, transparent);
+        box-shadow: 0 0 0 3px rgba(var(--fam-accent, 34, 211, 238), 0.16);
     }
     .wm-error {
         font-size: 11px;
@@ -2370,45 +2527,23 @@
         border-radius: 10px;
     }
     .wm-gate-btn#wm-continue-btn {
-        background: linear-gradient(135deg, rgba(34, 211, 238, 0.92), rgba(59, 130, 246, 0.92));
+        background: var(--brand-gradient, linear-gradient(135deg, #22d3ee, #3b82f6));
         border-color: transparent;
-        color: #04121c;
-        box-shadow: 0 8px 24px -12px rgba(34, 211, 238, 0.9);
+        color: var(--on-accent, #04121c);
+        box-shadow: 0 8px 24px -12px rgba(var(--fam-accent, 34, 211, 238), 0.9);
     }
     .wm-gate-btn#wm-continue-btn:hover:not(:disabled) {
         filter: brightness(1.08);
-        box-shadow: 0 10px 28px -10px rgba(34, 211, 238, 0.95);
+        box-shadow: 0 10px 28px -10px rgba(var(--fam-accent, 34, 211, 238), 0.95);
     }
     .wm-gate-btn#wm-continue-btn:disabled { opacity: 0.7; cursor: progress; }
     .wm-gate-btn.btn-secondary {
-        background: rgba(255, 255, 255, 0.055);
-        border: 1px solid rgba(255, 255, 255, 0.13);
+        background: color-mix(in srgb, var(--surface-2, #1e293b) 72%, transparent);
+        border: 1px solid var(--surface-border-strong, rgba(255, 255, 255, 0.13));
         color: var(--txt-sub);
     }
-    .wm-gate-btn.btn-secondary:hover { background: rgba(255, 255, 255, 0.10); color: var(--txt-main); }
+    .wm-gate-btn.btn-secondary:hover { background: color-mix(in srgb, var(--surface-3, #334155) 82%, transparent); color: var(--txt-main); }
 
-
-    /* --- ACIK TEMA UYARLAMALARI --------------------------------------- */
-    [data-theme="light"] .wm-gate-card {
-        background: linear-gradient(168deg, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0.62) 100%);
-        border-color: rgba(15, 23, 42, 0.09);
-        box-shadow: 0 22px 46px -28px rgba(15, 23, 42, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.9);
-    }
-    [data-theme="light"] .wm-gate-card::before { background: linear-gradient(180deg, rgba(255, 255, 255, 0.75), transparent); }
-    [data-theme="light"] .wm-gate-icon { color: rgba(71, 85, 105, 0.8); }
-    [data-theme="light"] .wm-gate-card--private .wm-gate-icon { color: rgba(14, 116, 144, 0.8); }
-    [data-theme="light"] .wm-gate-card--public:hover {
-        border-color: rgba(100, 116, 139, 0.45);
-        box-shadow: 0 28px 56px -30px rgba(15, 23, 42, 0.45), 0 0 38px -12px rgba(100, 116, 139, 0.45);
-    }
-    [data-theme="light"] .wm-gate-card--private:hover,
-    [data-theme="light"] .wm-gate-card--private.wm-open {
-        border-color: rgba(8, 145, 178, 0.45);
-        box-shadow: 0 28px 56px -30px rgba(15, 23, 42, 0.45), 0 0 46px -12px rgba(8, 145, 178, 0.45);
-    }
-    [data-theme="light"] .wm-pw-input { background: rgba(255, 255, 255, 0.75); border-color: rgba(15, 23, 42, 0.12); }
-    [data-theme="light"] .wm-password-wrap { border-top-color: rgba(15, 23, 42, 0.09); }
-    [data-theme="light"] .wm-gate-btn.btn-secondary { background: rgba(15, 23, 42, 0.05); border-color: rgba(15, 23, 42, 0.13); }
 
     /* --- DAR EKRAN ----------------------------------------------------- */
     @media (max-width: 760px) {
